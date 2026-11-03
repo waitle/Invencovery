@@ -1,0 +1,106 @@
+{
+  "_recorded_at": "2026-10-12",
+  "_request": "GET /v0.1/servers?search=filesystem&limit=3&version=latest (environmentVariables/runtimeArguments trimmed)",
+  "servers": [
+    {
+      "server": {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+        "name": "com.pulsemcp/remote-filesystem",
+        "description": "MCP server for remote filesystem operations on cloud storage (Google Cloud Storage).",
+        "repository": {
+          "url": "https://github.com/pulsemcp/mcp-servers",
+          "source": "github",
+          "subfolder": "experimental/remote-filesystem"
+        },
+        "version": "0.1.5",
+        "packages": [
+          {
+            "registryType": "npm",
+            "registryBaseUrl": "https://registry.npmjs.org",
+            "identifier": "remote-filesystem-mcp-server",
+            "version": "0.1.5",
+            "runtimeHint": "npx",
+            "transport": {
+              "type": "stdio"
+            }
+          }
+        ]
+      },
+      "_meta": {
+        "io.modelcontextprotocol.registry/official": {
+          "status": "active",
+          "statusChangedAt": "2026-06-26T14:07:53.723164Z",
+          "publishedAt": "2026-06-26T14:07:53.723164Z",
+          "updatedAt": "2026-06-26T14:07:53.723164Z",
+          "isLatest": true
+        }
+      }
+    },
+    {
+      "server": {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        "name": "io.github.Digital-Defiance/mcp-filesystem",
+        "description": "Advanced filesystem operations with strict security boundaries for AI agents",
+        "repository": {
+          "url": "https://github.com/Digital-Defiance/ai-capabilities-suite",
+          "source": "github"
+        },
+        "version": "0.1.9",
+        "packages": [
+          {
+            "registryType": "npm",
+            "identifier": "@ai-capabilities-suite/mcp-filesystem",
+            "version": "0.1.9",
+            "transport": {
+              "type": "stdio"
+            }
+          }
+        ]
+      },
+      "_meta": {
+        "io.modelcontextprotocol.registry/official": {
+          "status": "active",
+          "statusChangedAt": "2025-12-20T19:25:57.705316Z",
+          "publishedAt": "2025-12-20T19:25:57.705316Z",
+          "updatedAt": "2025-12-20T19:25:57.705316Z",
+          "isLatest": true
+        }
+      }
+    },
+    {
+      "server": {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        "name": "io.github.Evozim/chroot-filesystem-jail-mcp",
+        "description": "Premium agentic endpoint for chroot-filesystem-jail-mcp.",
+        "title": "Execute chroot-filesystem-jail-mcp",
+        "version": "2.0.0",
+        "remotes": [
+          {
+            "type": "sse",
+            "url": "https://api.m2mcent.com/chroot-filesystem-jail-mcp/sse",
+            "headers": [
+              {
+                "description": "Payment signature header",
+                "isSecret": true,
+                "name": "Payment-Signature"
+              }
+            ]
+          }
+        ]
+      },
+      "_meta": {
+        "io.modelcontextprotocol.registry/official": {
+          "status": "active",
+          "statusChangedAt": "2026-08-17T21:59:01.940669Z",
+          "publishedAt": "2026-08-17T21:59:01.940669Z",
+          "updatedAt": "2026-08-17T21:59:01.940669Z",
+          "isLatest": true
+        }
+      }
+    }
+  ],
+  "metadata": {
+    "nextCursor": "io.github.Evozim/chroot-filesystem-jail-mcp:2.0.0",
+    "count": 3
+  }
+}

@@ -1,0 +1,98 @@
+{
+  "_recorded_at": null,
+  "_note": "Hand-written from the GitHub REST schema (GET /search/code with Accept: application/vnd.github.text-match+json), trimmed to 3 hits in 2 repositories. Not a live recording.",
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "x-ratelimit-limit": "30",
+    "x-ratelimit-remaining": "29",
+    "x-ratelimit-reset": "1791802860",
+    "x-ratelimit-resource": "code_search"
+  },
+  "body": {
+    "total_count": 3,
+    "incomplete_results": false,
+    "items": [
+      {
+        "name": "render.ts",
+        "path": "src/render.ts",
+        "sha": "3d21ec53a331a6f037a91c368710b99387d012c1",
+        "url": "https://api.github.com/repositories/410001/contents/src/render.ts?ref=9c1f",
+        "git_url": "https://api.github.com/repositories/410001/git/blobs/3d21ec53a331a6f037a91c368710b99387d012c1",
+        "html_url": "https://github.com/octo-org/md-render/blob/9c1f/src/render.ts",
+        "repository": {
+          "id": 410001,
+          "node_id": "R_kgDOBkbp",
+          "name": "md-render",
+          "full_name": "octo-org/md-render",
+          "private": false,
+          "owner": { "login": "octo-org", "id": 6600100, "type": "Organization" },
+          "html_url": "https://github.com/octo-org/md-render",
+          "description": "Render markdown to HTML and PDF",
+          "fork": false,
+          "url": "https://api.github.com/repos/octo-org/md-render"
+        },
+        "score": 1.0,
+        "text_matches": [
+          {
+            "object_url": "https://api.github.com/repositories/410001/contents/src/render.ts?ref=9c1f",
+            "object_type": "FileContent",
+            "property": "content",
+            "fragment": "export async function renderMarkdownToPdf(input: string) {",
+            "matches": [{ "text": "renderMarkdownToPdf", "indices": [22, 41] }]
+          }
+        ]
+      },
+      {
+        "name": "pdf.ts",
+        "path": "src/pdf.ts",
+        "sha": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+        "url": "https://api.github.com/repositories/410001/contents/src/pdf.ts?ref=9c1f",
+        "git_url": "https://api.github.com/repositories/410001/git/blobs/0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+        "html_url": "https://github.com/octo-org/md-render/blob/9c1f/src/pdf.ts",
+        "repository": {
+          "id": 410001,
+          "node_id": "R_kgDOBkbp",
+          "name": "md-render",
+          "full_name": "octo-org/md-render",
+          "private": false,
+          "owner": { "login": "octo-org", "id": 6600100, "type": "Organization" },
+          "html_url": "https://github.com/octo-org/md-render",
+          "description": "Render markdown to HTML and PDF",
+          "fork": false,
+          "url": "https://api.github.com/repos/octo-org/md-render"
+        },
+        "score": 1.0,
+        "text_matches": [
+          {
+            "object_type": "FileContent",
+            "property": "content",
+            "fragment": "// renderMarkdownToPdf wraps puppeteer.pdf()",
+            "matches": [{ "text": "renderMarkdownToPdf", "indices": [3, 22] }]
+          }
+        ]
+      },
+      {
+        "name": "helpers.py",
+        "path": "lib/helpers.py",
+        "sha": "ffeeddccbbaa99887766554433221100ffeeddcc",
+        "url": "https://api.github.com/repositories/410002/contents/lib/helpers.py?ref=aa11",
+        "git_url": "https://api.github.com/repositories/410002/git/blobs/ffeeddccbbaa99887766554433221100ffeeddcc",
+        "html_url": "https://github.com/Other-Org/Pdf-Helpers/blob/aa11/lib/helpers.py",
+        "repository": {
+          "id": 410002,
+          "node_id": "R_kgDOBkbq",
+          "name": "Pdf-Helpers",
+          "full_name": "Other-Org/Pdf-Helpers",
+          "private": false,
+          "owner": { "login": "Other-Org", "id": 6600200, "type": "Organization" },
+          "html_url": "https://github.com/Other-Org/Pdf-Helpers",
+          "description": null,
+          "fork": false,
+          "url": "https://api.github.com/repos/Other-Org/Pdf-Helpers"
+        },
+        "score": 1.0,
+        "text_matches": []
+      }
+    ]
+  }
+}

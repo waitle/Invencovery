@@ -1,0 +1,8 @@
+{
+  "_recorded_at": "2026-10-12",
+  "_request": "GET /v0.1/servers?search=file%20system&limit=3&version=latest (search is a name substring match: no name contains \"file system\")",
+  "servers": [],
+  "metadata": {
+    "count": 0
+  }
+}

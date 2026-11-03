@@ -1,0 +1,23 @@
+{
+  "name": "recyclewheel",
+  "version": "0.1.0",
+  "description": "Reuse-first gate for coding agents: decompose a task, search GitHub/npm/PyPI/MCP registry for existing solutions, score them, and record adopt/extend/reference/build decisions in a ledger. Don't reinvent the wheel.",
+  "author": {
+    "name": "recyclewheel contributors"
+  },
+  "homepage": "https://github.com/recyclewheel/recyclewheel#readme",
+  "repository": "https://github.com/recyclewheel/recyclewheel",
+  "license": "MIT",
+  "keywords": ["reuse", "search-first", "dependencies", "license", "mcp", "ledger"],
+  "mcpServers": {
+    "recyclewheel": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/cli.js", "mcp"],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN:-}",
+        "GH_TOKEN": "${GH_TOKEN:-}",
+        "LIBRARIES_IO_API_KEY": "${LIBRARIES_IO_API_KEY:-}"
+      }
+    }
+  }
+}

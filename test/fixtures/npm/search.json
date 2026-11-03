@@ -1,0 +1,137 @@
+{
+  "_recorded_at": "2026-10-12",
+  "_note": "GET registry.npmjs.org/-/v1/search?text=markdown%20pdf&size=4, maintainer e-mails removed",
+  "objects": [
+    {
+      "downloads": {
+        "monthly": 12675,
+        "weekly": 3481
+      },
+      "dependents": "3",
+      "updated": "2026-10-10T00:30:29.693Z",
+      "searchScore": 399.7606,
+      "package": {
+        "name": "@types/markdown-pdf",
+        "keywords": [],
+        "version": "9.0.5",
+        "description": "TypeScript definitions for markdown-pdf",
+        "sanitized_name": "@types/markdown-pdf",
+        "license": "MIT",
+        "date": "2023-11-07T10:50:51.093Z",
+        "links": {
+          "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/markdown-pdf",
+          "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+          "npm": "https://www.npmjs.com/package/@types/markdown-pdf"
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    },
+    {
+      "downloads": {
+        "monthly": 13531,
+        "weekly": 4271
+      },
+      "dependents": "2",
+      "updated": "2026-10-11T11:46:07.826Z",
+      "searchScore": 175.8571,
+      "package": {
+        "name": "@shiftlabs/markit",
+        "keywords": [
+          "markdown",
+          "pdf",
+          "docx",
+          "html",
+          "converter",
+          "rust",
+          "agents"
+        ],
+        "version": "0.6.1",
+        "description": "Convert anything to markdown. PDF, DOCX, PPTX, XLSX, HTML, EPUB, Jupyter, RSS, images, audio, URLs, and more. Works as a CLI and as a library.",
+        "sanitized_name": "@shiftlabs/markit",
+        "license": "MIT",
+        "date": "2026-08-17T20:18:55.156Z",
+        "links": {
+          "homepage": "https://github.com/shift-labs-ai/markit#readme",
+          "repository": "git+https://github.com/shift-labs-ai/markit.git",
+          "bugs": "https://github.com/shift-labs-ai/markit/issues",
+          "npm": "https://www.npmjs.com/package/@shiftlabs/markit"
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    },
+    {
+      "downloads": {
+        "monthly": 30578,
+        "weekly": 6560
+      },
+      "dependents": "58",
+      "updated": "2026-10-10T00:27:08.419Z",
+      "searchScore": 175.57666,
+      "package": {
+        "name": "markdown-pdf",
+        "keywords": [
+          "markdown",
+          "pdf",
+          "convert",
+          "template"
+        ],
+        "version": "11.0.0",
+        "description": "Markdown to PDF converter",
+        "sanitized_name": "markdown-pdf",
+        "license": "MIT",
+        "date": "2022-07-12T17:24:22.458Z",
+        "links": {
+          "homepage": "https://github.com/alanshaw/markdown-pdf",
+          "repository": "git+ssh://git@github.com/alanshaw/markdown-pdf.git",
+          "bugs": "https://github.com/alanshaw/markdown-pdf/issues",
+          "npm": "https://www.npmjs.com/package/markdown-pdf"
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    },
+    {
+      "downloads": {
+        "monthly": 5120,
+        "weekly": 743
+      },
+      "dependents": 0,
+      "updated": "2026-10-12T01:02:47.416Z",
+      "searchScore": 152.46342,
+      "package": {
+        "name": "@gmickel/gno",
+        "keywords": [
+          "embeddings",
+          "llm",
+          "local-first",
+          "mcp",
+          "rag",
+          "search",
+          "semantic-search",
+          "vector-search"
+        ],
+        "version": "2.11.0",
+        "description": "Local semantic search for your documents. Index Markdown, PDF, and Office files with hybrid BM25 + vector search.",
+        "sanitized_name": "@gmickel/gno",
+        "license": "MIT",
+        "date": "2026-10-12T01:02:15.758Z",
+        "links": {
+          "homepage": "https://gno.sh",
+          "repository": "git+https://github.com/gmickel/gno.git",
+          "bugs": "https://github.com/gmickel/gno/issues",
+          "npm": "https://www.npmjs.com/package/@gmickel/gno"
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    }
+  ],
+  "total": 2426556,
+  "time": "2026-10-12T06:41:26.250Z"
+}

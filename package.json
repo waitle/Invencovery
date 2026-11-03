@@ -1,0 +1,43 @@
+{
+  "name": "recyclewheel",
+  "version": "0.1.0",
+  "description": "Reuse-first gate for coding agents: decompose, search, score, and record adopt/extend/reference/build decisions. Don't reinvent the wheel.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "recyclewheel": "dist/cli.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "files": [
+    "dist",
+    "skills",
+    ".claude-plugin",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --exclude test/live/** --exclude test/smoke/**",
+    "test:smoke": "npm run build && vitest run test/smoke",
+    "test:live": "vitest run test/live",
+    "lint:skill": "node scripts/check-skill.mjs",
+    "check": "npm run typecheck && npm test && npm run build && npm run test:smoke && npm run lint:skill"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "spdx-expression-parse": "^5.0.0",
+    "tldts": "^7.4.19",
+    "zod": "^4.6.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@types/spdx-expression-parse": "^4.0.0",
+    "tsup": "^8.5.1",
+    "typescript": "~5.9.3",
+    "vitest": "^5.0.3"
+  }
+}

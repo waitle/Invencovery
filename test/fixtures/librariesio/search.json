@@ -1,0 +1,60 @@
+{
+  "_recorded_at": null,
+  "_note": "Hand-written from the libraries.io API documentation (GET /api/search?q=...&platforms=PyPI). A real recording needs an API key, which this project does not have. Field names follow the documented project object; the array is wrapped in `response` so the file can carry metadata.",
+  "response": [
+    {
+      "name": "Markdown",
+      "platform": "Pypi",
+      "description": "Python implementation of John Gruber's Markdown.",
+      "homepage": "https://Python-Markdown.github.io/",
+      "repository_url": "https://github.com/Python-Markdown/markdown",
+      "stars": 3900,
+      "forks": 880,
+      "rank": 31,
+      "status": null,
+      "licenses": "BSD-3-Clause",
+      "normalized_licenses": ["BSD-3-Clause"],
+      "latest_release_published_at": "2026-09-25T13:46:22.000Z",
+      "latest_stable_release_number": "3.11",
+      "language": "Python",
+      "keywords": ["markdown", "markdown-parser", "python-markdown"],
+      "package_manager_url": "https://pypi.org/project/Markdown/"
+    },
+    {
+      "name": "markdown_old_tool",
+      "platform": "Pypi",
+      "description": "Abandoned converter that is still listed.",
+      "homepage": "https://example.org/markdown-old-tool",
+      "repository_url": "git@github.com:Someone/Markdown_Old_Tool.git",
+      "stars": 12,
+      "forks": 1,
+      "rank": 4,
+      "status": "Deprecated",
+      "licenses": "",
+      "normalized_licenses": [],
+      "latest_release_published_at": "2019-03-01T10:00:00.000Z",
+      "latest_stable_release_number": "0.4.2",
+      "language": "Python",
+      "keywords": [],
+      "package_manager_url": "https://pypi.org/project/markdown-old-tool/"
+    },
+    {
+      "name": "md2pdf",
+      "platform": "Pypi",
+      "description": null,
+      "homepage": null,
+      "repository_url": null,
+      "stars": 0,
+      "forks": 0,
+      "rank": 1,
+      "status": null,
+      "licenses": "MIT, Apache-2.0",
+      "normalized_licenses": ["MIT", "Apache-2.0"],
+      "latest_release_published_at": null,
+      "latest_stable_release_number": null,
+      "language": "Python",
+      "keywords": [],
+      "package_manager_url": null
+    }
+  ]
+}

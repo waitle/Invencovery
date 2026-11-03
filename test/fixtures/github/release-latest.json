@@ -1,0 +1,19 @@
+{
+  "_recorded_at": null,
+  "_note": "Hand-written from the GitHub REST schema (GET /repos/{owner}/{repo}/releases/latest), trimmed. Not a live recording.",
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "x-ratelimit-resource": "core"
+  },
+  "body": {
+    "id": 301234567,
+    "tag_name": "14.1.0",
+    "name": "14.1.0",
+    "draft": false,
+    "prerelease": false,
+    "created_at": "2026-09-10T11:00:00Z",
+    "published_at": "2026-09-10T11:42:17Z",
+    "html_url": "https://github.com/markdown-it/markdown-it/releases/tag/14.1.0",
+    "author": { "login": "release-bot", "id": 41898282, "type": "Bot" }
+  }
+}

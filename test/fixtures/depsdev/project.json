@@ -1,0 +1,38 @@
+{
+  "_recorded_at": "2026-10-12",
+  "_note": "GET api.deps.dev/v3/projects/github.com%2Fpallets%2Fflask, scorecard checks abbreviated",
+  "projectKey": {
+    "id": "github.com/pallets/flask"
+  },
+  "openIssuesCount": 4,
+  "starsCount": 74905,
+  "forksCount": 17042,
+  "license": "BSD-3-Clause",
+  "description": "The Python micro framework for building web applications.",
+  "homepage": "https://flask.palletsprojects.com",
+  "scorecard": {
+    "date": "2026-08-24T00:00:00Z",
+    "repository": {
+      "name": "github.com/pallets/flask",
+      "commit": "d318b683471101618febed18996405ad26462110"
+    },
+    "checks": [
+      {
+        "name": "Code-Review",
+        "score": 0,
+        "reason": "Found 2/25 approved changesets -- score normalized to 0"
+      },
+      {
+        "name": "Maintained",
+        "score": 10,
+        "reason": "18 commit(s) and 19 issue activity found in the last 90 days -- score normalized to 10"
+      },
+      {
+        "name": "CII-Best-Practices",
+        "score": 0,
+        "reason": "no effort to earn an OpenSSF best practices badge detected"
+      }
+    ],
+    "overallScore": 7.1
+  }
+}

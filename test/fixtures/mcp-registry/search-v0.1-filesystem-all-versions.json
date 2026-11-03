@@ -1,0 +1,78 @@
+{
+  "_recorded_at": "2026-10-12",
+  "_request": "GET /v0.1/servers?search=filesystem&limit=2 (no version filter: the same server is listed once per version)",
+  "servers": [
+    {
+      "server": {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+        "name": "com.pulsemcp/remote-filesystem",
+        "description": "MCP server for remote filesystem operations on cloud storage (Google Cloud Storage).",
+        "repository": {
+          "url": "https://github.com/pulsemcp/mcp-servers",
+          "source": "github",
+          "subfolder": "experimental/remote-filesystem"
+        },
+        "version": "0.1.2",
+        "packages": [
+          {
+            "registryType": "npm",
+            "registryBaseUrl": "https://registry.npmjs.org",
+            "identifier": "remote-filesystem-mcp-server",
+            "version": "0.1.2",
+            "runtimeHint": "npx",
+            "transport": {
+              "type": "stdio"
+            }
+          }
+        ]
+      },
+      "_meta": {
+        "io.modelcontextprotocol.registry/official": {
+          "status": "active",
+          "statusChangedAt": "2026-05-18T13:28:59.991989Z",
+          "publishedAt": "2026-05-18T13:28:59.991989Z",
+          "updatedAt": "2026-05-18T13:28:59.991989Z",
+          "isLatest": false
+        }
+      }
+    },
+    {
+      "server": {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+        "name": "com.pulsemcp/remote-filesystem",
+        "description": "MCP server for remote filesystem operations on cloud storage (Google Cloud Storage).",
+        "repository": {
+          "url": "https://github.com/pulsemcp/mcp-servers",
+          "source": "github",
+          "subfolder": "experimental/remote-filesystem"
+        },
+        "version": "0.1.3",
+        "packages": [
+          {
+            "registryType": "npm",
+            "registryBaseUrl": "https://registry.npmjs.org",
+            "identifier": "remote-filesystem-mcp-server",
+            "version": "0.1.3",
+            "runtimeHint": "npx",
+            "transport": {
+              "type": "stdio"
+            }
+          }
+        ]
+      },
+      "_meta": {
+        "io.modelcontextprotocol.registry/official": {
+          "status": "active",
+          "statusChangedAt": "2026-06-14T17:28:23.553635Z",
+          "publishedAt": "2026-06-14T17:28:23.553635Z",
+          "updatedAt": "2026-06-14T17:28:23.553635Z",
+          "isLatest": false
+        }
+      }
+    }
+  ],
+  "metadata": {
+    "nextCursor": "com.pulsemcp/remote-filesystem:0.1.3",
+    "count": 2
+  }
+}

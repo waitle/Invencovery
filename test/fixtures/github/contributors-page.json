@@ -1,0 +1,17 @@
+{
+  "_recorded_at": null,
+  "_note": "Hand-written from the GitHub REST schema (GET /repos/{owner}/{repo}/contributors?per_page=1&anon=1). The last page number in the Link header is the contributor count. Not a live recording.",
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "link": "<https://api.github.com/repositories/3201811/contributors?per_page=1&anon=1&page=2>; rel=\"next\", <https://api.github.com/repositories/3201811/contributors?per_page=1&anon=1&page=412>; rel=\"last\"",
+    "x-ratelimit-resource": "core"
+  },
+  "body": [
+    {
+      "login": "top-contributor",
+      "id": 1100222,
+      "type": "User",
+      "contributions": 1893
+    }
+  ]
+}

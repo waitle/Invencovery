@@ -1,0 +1,77 @@
+{
+  "_recorded_at": "2026-10-12",
+  "_note": "GET api.deps.dev/v3/systems/pypi/packages/flask/versions/3.1.3:dependencies, edges removed",
+  "nodes": [
+    {
+      "versionKey": {
+        "system": "PYPI",
+        "name": "flask",
+        "version": "3.1.3"
+      },
+      "bundled": false,
+      "relation": "SELF",
+      "errors": []
+    },
+    {
+      "versionKey": {
+        "system": "PYPI",
+        "name": "blinker",
+        "version": "1.9.0"
+      },
+      "bundled": false,
+      "relation": "DIRECT",
+      "errors": []
+    },
+    {
+      "versionKey": {
+        "system": "PYPI",
+        "name": "click",
+        "version": "8.5.0"
+      },
+      "bundled": false,
+      "relation": "DIRECT",
+      "errors": []
+    },
+    {
+      "versionKey": {
+        "system": "PYPI",
+        "name": "itsdangerous",
+        "version": "2.2.0"
+      },
+      "bundled": false,
+      "relation": "DIRECT",
+      "errors": []
+    },
+    {
+      "versionKey": {
+        "system": "PYPI",
+        "name": "jinja2",
+        "version": "3.1.6"
+      },
+      "bundled": false,
+      "relation": "DIRECT",
+      "errors": []
+    },
+    {
+      "versionKey": {
+        "system": "PYPI",
+        "name": "markupsafe",
+        "version": "3.0.4"
+      },
+      "bundled": false,
+      "relation": "DIRECT",
+      "errors": []
+    },
+    {
+      "versionKey": {
+        "system": "PYPI",
+        "name": "werkzeug",
+        "version": "3.1.9"
+      },
+      "bundled": false,
+      "relation": "DIRECT",
+      "errors": []
+    }
+  ],
+  "error": ""
+}

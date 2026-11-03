@@ -1,0 +1,65 @@
+{
+  "_recorded_at": "2026-10-12",
+  "_note": "GET api.deps.dev/v3/systems/pypi/packages/flask, versions abbreviated",
+  "packageKey": {
+    "system": "PYPI",
+    "name": "flask"
+  },
+  "versions": [
+    {
+      "versionKey": {
+        "system": "PYPI",
+        "name": "flask",
+        "version": "0.1.0"
+      },
+      "publishedAt": "2010-04-16T14:29:37Z",
+      "isDefault": false,
+      "isDeprecated": false,
+      "deprecatedReason": ""
+    },
+    {
+      "versionKey": {
+        "system": "PYPI",
+        "name": "flask",
+        "version": "2.0.0"
+      },
+      "publishedAt": "2021-05-11T21:46:04Z",
+      "isDefault": false,
+      "isDeprecated": false,
+      "deprecatedReason": ""
+    },
+    {
+      "versionKey": {
+        "system": "PYPI",
+        "name": "flask",
+        "version": "3.0.0"
+      },
+      "publishedAt": "2023-09-30T14:36:10Z",
+      "isDefault": false,
+      "isDeprecated": false,
+      "deprecatedReason": ""
+    },
+    {
+      "versionKey": {
+        "system": "PYPI",
+        "name": "flask",
+        "version": "3.1.2"
+      },
+      "publishedAt": "2025-08-19T21:03:19Z",
+      "isDefault": false,
+      "isDeprecated": false,
+      "deprecatedReason": ""
+    },
+    {
+      "versionKey": {
+        "system": "PYPI",
+        "name": "flask",
+        "version": "3.1.3"
+      },
+      "publishedAt": "2026-02-19T05:00:56Z",
+      "isDefault": true,
+      "isDeprecated": false,
+      "deprecatedReason": ""
+    }
+  ]
+}

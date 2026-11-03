@@ -1,0 +1,40 @@
+{
+  "_note": "SYNTHETIC: hand-written in the pre-freeze flat layout (no server wrapper, version_detail, snake_case meta, registry_name/name packages) to prove the parser tolerates old registry builds. Not a recording.",
+  "servers": [
+    {
+      "id": "0e8e7b2a-1111-4c2e-9d53-5a1d8c1f0001",
+      "name": "io.github.example/legacy-pdf",
+      "description": "Convert Markdown to PDF from an MCP client.",
+      "status": "active",
+      "repository": {
+        "url": "https://github.com/Example/Legacy-PDF.git",
+        "source": "github",
+        "id": "123456"
+      },
+      "version_detail": {
+        "version": "1.2.0",
+        "release_date": "2025-08-01T10:00:00Z",
+        "is_latest": true
+      },
+      "packages": [
+        {
+          "registry_name": "npm",
+          "name": "legacy-pdf-mcp",
+          "version": "1.2.0"
+        }
+      ],
+      "_meta": {
+        "io.modelcontextprotocol.registry/official": {
+          "id": "0e8e7b2a-1111-4c2e-9d53-5a1d8c1f0001",
+          "published_at": "2025-08-01T10:00:00Z",
+          "updated_at": "2025-08-02T10:00:00Z",
+          "is_latest": true
+        }
+      }
+    }
+  ],
+  "metadata": {
+    "next_cursor": null,
+    "count": 1
+  }
+}

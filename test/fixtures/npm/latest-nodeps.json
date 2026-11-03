@@ -1,0 +1,13 @@
+{
+  "_recorded_at": "2026-10-12",
+  "_note": "GET registry.npmjs.org/commander/latest, abbreviated",
+  "name": "commander",
+  "version": "15.0.0",
+  "description": "the complete solution for node.js command-line programs",
+  "license": "MIT",
+  "repository": {
+    "url": "git+https://github.com/tj/commander.js.git",
+    "type": "git"
+  },
+  "homepage": "https://github.com/tj/commander.js#readme"
+}

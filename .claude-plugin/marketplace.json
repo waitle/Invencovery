@@ -1,0 +1,16 @@
+{
+  "name": "recyclewheel",
+  "description": "recyclewheel: a reuse-first gate (MCP server + skill) for coding agents.",
+  "owner": {
+    "name": "recyclewheel contributors"
+  },
+  "plugins": [
+    {
+      "name": "recyclewheel",
+      "source": "./",
+      "description": "Decompose a task, search existing solutions (GitHub, npm, PyPI, MCP registry), score them, and record adopt/extend/reference/build decisions with evidence.",
+      "category": "development",
+      "tags": ["reuse", "search-first", "dependencies", "license", "mcp"]
+    }
+  ]
+}

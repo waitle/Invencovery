@@ -1,0 +1,94 @@
+{
+  "_recorded_at": "2026-10-12",
+  "_note": "GET pypi.org/pypi/markdown/json, abbreviated (no description, no releases)",
+  "info": {
+    "author": "Manfred Stienstra, Yuri Takhteyev",
+    "author_email": "Waylan limberg <python.markdown@gmail.com>",
+    "bugtrack_url": null,
+    "classifiers": [
+      "Development Status :: 5 - Production/Stable",
+      "Operating System :: OS Independent",
+      "Programming Language :: Python",
+      "Programming Language :: Python :: 3",
+      "Programming Language :: Python :: 3 :: Only",
+      "Programming Language :: Python :: 3.11",
+      "Programming Language :: Python :: 3.12",
+      "Programming Language :: Python :: 3.13",
+      "Programming Language :: Python :: 3.14",
+      "Programming Language :: Python :: 3.15",
+      "Programming Language :: Python :: Implementation :: CPython",
+      "Programming Language :: Python :: Implementation :: PyPy",
+      "Topic :: Communications :: Email :: Filters",
+      "Topic :: Internet :: WWW/HTTP :: Dynamic Content :: CGI Tools/Libraries",
+      "Topic :: Internet :: WWW/HTTP :: Site Management",
+      "Topic :: Software Development :: Documentation",
+      "Topic :: Software Development :: Libraries :: Python Modules",
+      "Topic :: Text Processing :: Filters",
+      "Topic :: Text Processing :: Markup :: HTML",
+      "Topic :: Text Processing :: Markup :: Markdown"
+    ],
+    "description_content_type": "text/markdown",
+    "docs_url": null,
+    "download_url": null,
+    "downloads": {
+      "last_day": -1,
+      "last_month": -1,
+      "last_week": -1
+    },
+    "dynamic": [
+      "License-File"
+    ],
+    "home_page": null,
+    "keywords": "markdown, markdown-parser, python-markdown, markdown-to-html",
+    "license": null,
+    "license_expression": "BSD-3-Clause",
+    "license_files": [
+      "LICENSE.md"
+    ],
+    "maintainer": "Isaac Muse",
+    "maintainer_email": "Waylan Limberg <python.markdown@gmail.com>",
+    "name": "Markdown",
+    "package_url": "https://pypi.org/project/Markdown/",
+    "platform": null,
+    "project_url": "https://pypi.org/project/Markdown/",
+    "project_urls": {
+      "Changelog": "https://python-markdown.github.io/changelog/",
+      "Documentation": "https://Python-Markdown.github.io/",
+      "Homepage": "https://Python-Markdown.github.io/",
+      "Issue Tracker": "https://github.com/Python-Markdown/markdown/issues",
+      "Repository": "https://github.com/Python-Markdown/markdown"
+    },
+    "provides_extra": [
+      "testing",
+      "docs"
+    ],
+    "release_url": "https://pypi.org/project/Markdown/3.11/",
+    "requires_dist": [
+      "coverage; extra == \"testing\"",
+      "pyyaml; extra == \"testing\"",
+      "zensical==0.0.62; extra == \"docs\"",
+      "mdx_gh_links==0.4; extra == \"docs\"",
+      "mkdocstrings==1.0.6; extra == \"docs\"",
+      "mkdocstrings-python==1.16.8; extra == \"docs\"",
+      "pygments==2.21.0; extra == \"docs\"",
+      "pymdown-extensions==11.0.2; extra == \"docs\"",
+      "justhtml==3.11.2; extra == \"docs\"",
+      "ghp-import==2.1.0; extra == \"docs\""
+    ],
+    "requires_python": ">=3.11",
+    "summary": "Python implementation of John Gruber's Markdown.",
+    "version": "3.11",
+    "yanked": false,
+    "yanked_reason": null
+  },
+  "urls": [
+    {
+      "filename": "markdown-3.11-py3-none-any.whl",
+      "packagetype": "bdist_wheel",
+      "upload_time_iso_8601": "2026-09-25T13:46:22.163551Z",
+      "yanked": false
+    }
+  ],
+  "last_serial": 41453142,
+  "vulnerabilities": []
+}

@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+*.log
+*.db
+*.db-wal
+*.db-shm
+*.tgz
+.env
+.env.*
+.DS_Store
+Thumbs.db
+
+# oh-my-claudecode operational state
+.omc/

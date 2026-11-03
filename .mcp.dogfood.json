@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "recyclewheel": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["dist/cli.js", "mcp"],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN:-}",
+        "GH_TOKEN": "${GH_TOKEN:-}",
+        "LIBRARIES_IO_API_KEY": "${LIBRARIES_IO_API_KEY:-}"
+      }
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "_recorded_at": "2026-10-12",
+  "_note": "GET api.npmjs.org/downloads/point/last-week/@babel/core",
+  "downloads": 189388655,
+  "start": "2026-10-04",
+  "end": "2026-10-10",
+  "package": "@babel/core"
+}

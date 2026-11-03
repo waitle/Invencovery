@@ -1,0 +1,36 @@
+{
+  "_recorded_at": "2026-10-12",
+  "_request": "GET /v0.1/servers/com.pulsemcp%2Fremote-filesystem/versions/latest (condensed)",
+  "server": {
+    "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+    "name": "com.pulsemcp/remote-filesystem",
+    "description": "MCP server for remote filesystem operations on cloud storage (Google Cloud Storage).",
+    "repository": {
+      "url": "https://github.com/pulsemcp/mcp-servers",
+      "source": "github",
+      "subfolder": "experimental/remote-filesystem"
+    },
+    "version": "0.1.5",
+    "packages": [
+      {
+        "registryType": "npm",
+        "registryBaseUrl": "https://registry.npmjs.org",
+        "identifier": "remote-filesystem-mcp-server",
+        "version": "0.1.5",
+        "runtimeHint": "npx",
+        "transport": {
+          "type": "stdio"
+        }
+      }
+    ]
+  },
+  "_meta": {
+    "io.modelcontextprotocol.registry/official": {
+      "status": "active",
+      "statusChangedAt": "2026-06-26T14:07:53.723164Z",
+      "publishedAt": "2026-06-26T14:07:53.723164Z",
+      "updatedAt": "2026-06-26T14:07:53.723164Z",
+      "isLatest": true
+    }
+  }
+}
