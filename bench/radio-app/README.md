@@ -1,0 +1,52 @@
+# Benchmark: radio app reuse research (with vs. without recyclewheel)
+
+Date: 2026-11-04. One run per condition, so treat this as anecdotal, not statistical.
+
+## Task (identical prompt for both)
+
+Decide reuse for a smartphone internet-radio app (React Native, Android + iOS, MIT project, app-store distribution):
+stream playback, station directory, background/lock-screen playback, ICY now-playing metadata, local favorites.
+No app code is written; the output is a reuse report.
+
+| Condition | How |
+|---|---|
+| A: plain agent | WebSearch + curl (GitHub API, npm registry). No recyclewheel. See [report-plain.md](report-plain.md). |
+| B: recyclewheel | Agent follows `skills/recyclewheel/SKILL.md`; `rw_*` tools called through [rwcall.mjs](rwcall.mjs) because the MCP server was not attached to the subagent. See [report-rw.md](report-rw.md) and [ledger.rw.jsonl](ledger.rw.jsonl). |
+
+## Result
+
+| | A: plain | B: recyclewheel |
+|---|---|---|
+| Tool calls | 5 | 28 |
+| Subagent tokens | about 70k | about 131k |
+| Wall time | about 71 s | about 327 s |
+| Final picks | react-native-track-player, Radio Browser API (own thin client), react-native-mmkv | react-native-track-player pinned to 4.1.2, radio-browser-api (extend), react-native-mmkv |
+| Per-candidate score / license verdict | none | yes |
+| Rejected alternatives with reasons | short list | recorded with reasons |
+| Cross-cutting checks (cost, store policy, privacy, ops, security) | none | all 5, with evidence ids |
+| Evidence trail | none | ledger with evidence ids |
+
+### Main difference
+
+`react-native-track-player` on GitHub `main` (V5, npm `@rntp/player`) is under a non-commercial license
+(`license.txt`: "Free for non-commercial use ... requires a commercial license"). Only the 4.x line on npm
+(`react-native-track-player@4.1.2`) is Apache-2.0. B flagged this and pinned 4.x. A noticed the v5 tag and the
+`NOASSERTION` GitHub license value but did not identify the license change. Checked by hand on 2026-11-05.
+
+### Caveats
+
+- One run per condition; model output varies between runs.
+- B used a CLI wrapper rather than the real plugin, so skill auto-trigger was not exercised.
+- B hit tool friction: 3 of 4 default npm searches failed once (not reproducible later, likely transient),
+  and `rw_evaluate` required `no_service_reason` on every SDK-like candidate.
+- The first version of the wrapper also printed `structuredContent`, which inflated B's context. This copy of the wrapper
+  prints it only with `--json`.
+- Only the license claims were independently verified. Apple forum and GitHub issue references in the reports were not.
+
+## Reproduce
+
+```bash
+npm run build
+mkdir -p /tmp/rw-bench && cd /tmp/rw-bench
+RECYCLEWHEEL_CACHE_DIR=/tmp/rw-bench/cache node <repo>/bench/radio-app/rwcall.mjs rw_status
+```
