@@ -15,7 +15,7 @@ const InputShape = {
   project_root: z
     .string()
     .optional()
-    .describe('Project directory that holds .recyclewheel/ledger.jsonl. Defaults to RECYCLEWHEEL_PROJECT_ROOT or the server working directory.'),
+    .describe('Project directory holding .recyclewheel/ (default: the server project root).'),
 };
 
 function remoteLine(r: StatusReport['remote_cache']): string {

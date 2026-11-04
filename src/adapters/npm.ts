@@ -245,6 +245,7 @@ function npmLicense(doc: z.infer<typeof LatestSchema>): string | null {
 export function createNpmEnricher(deps: { http: HttpClient }): Enricher {
   const { http } = deps;
   return {
+    name: 'npm',
     supports: (ref) => parseRef(ref)?.scheme === 'npm',
     async enrich(ref) {
       const parsed = parseRef(ref);

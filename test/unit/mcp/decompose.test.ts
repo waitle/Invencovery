@@ -91,6 +91,18 @@ describe('rw_decompose', () => {
     expect(r.text).not.toContain('search: true');
   });
 
+  it('carries a preflight so rw_status need not be called first', async () => {
+    h = await createHarness({
+      adapters: { github_repo: fakeAdapter('github_repo', () => ({ candidates: [] })), npm: fakeAdapter('npm', () => ({ candidates: [] })) },
+      env: { RECYCLEWHEEL_SOURCES: 'github_repo,npm', RECYCLEWHEEL_OFFLINE: '1' },
+    });
+    const r = await h.call('rw_decompose', { project: { ...PROJECT }, components: [component('Parser')] });
+    const out = DecomposeOutputSchema.parse(r.structured);
+    expect(out.preflight).toMatchObject({ github_auth: 'none', offline: true, sources: ['github_repo', 'npm'], ledger_exists: true });
+    expect(r.text).toContain('Preflight: GitHub auth none');
+    expect(r.text).toContain('OFFLINE');
+  });
+
   it('without search the output has no searches and the next step mentions the option', async () => {
     h = await createHarness();
     const r = await h.call('rw_decompose', { project: { ...PROJECT }, components: [component('Parser')] });

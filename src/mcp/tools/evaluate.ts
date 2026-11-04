@@ -95,41 +95,29 @@ const CODE_SCHEMES: readonly RefScheme[] = ['github', 'npm', 'pypi', 'mcp'];
 
 const CandidateInputSchema = z
   .object({
-    ref: CandidateRefSchema.describe(
-      'Candidate ref as returned by rw_search, e.g. "github:owner/repo", "npm:name", "pypi:name", "mcp:server", "hf:owner/model" (model weights), "saas:vendor/product" (hosted service; needs the saas block), "web:https://...".',
-    ),
+    ref: CandidateRefSchema.describe('Ref from rw_search: github:owner/repo | npm:name | pypi:name | mcp:id | hf:owner/model (model weights) | saas:vendor/product (needs the saas block) | web:https://...'),
     fit: z
       .number()
       .int()
       .min(0)
       .max(5)
-      .describe('Your judgment of how well it meets the component requirements: 5 exact, 4 config-level gaps, 3 needs wrapping, 2 design reference only, 1 marginal, 0 unrelated.'),
+      .describe('Fit 0-5: 5 exact, 4 config-level gaps, 3 needs wrapping, 2 design reference only, 1 marginal, 0 unrelated.'),
     fit_reason: z.string().min(10).max(2000).describe('Why that fit value (at least 10 characters).'),
-    weights_ref: CandidateRefSchema.optional().describe(
-      'Only for code candidates that load pretrained model weights: the "hf:owner/model" ref of the weights. Weights are licensed separately from the code; the final license verdict is the worse of the two.',
-    ),
+    weights_ref: CandidateRefSchema.optional().describe('For code that loads pretrained weights: their hf:owner/model ref. Weights have their own license; the verdict is the worse of code and weights.'),
     weights_exempt_reason: z
       .string()
       .min(10, 'weights_exempt_reason must be at least 10 characters: say why this candidate needs no weights check (for example "LLM API gateway: forwards HTTP calls to remote providers, loads no model", or "bundles the VAD model in the wheel under the same MIT LICENSE").')
       .max(300, 'weights_exempt_reason must be at most 300 characters.')
       .optional()
-      .describe(
-        'Only for github/npm/pypi/mcp candidates that sound like ML but need no separate weights license: they load no weights (for example an LLM API gateway or a client for a remote API), or the weights are bundled in the package under the same LICENSE as the code (say so). 10-300 characters. Clears the model_weights_unverified warning; the license verdict is unchanged. Exclusive with weights_ref.',
-      ),
-    service_ref: CandidateRefSchema.optional().describe(
-      "Only for github/npm/pypi/mcp candidates: the \"saas:vendor/product\" ref of the hosted service this package is a client, SDK or plugin of. Using the package means accepting that service's terms, so the service is the real decision: evaluate it in the same call (services are processed first) or earlier in the same component. Until the service has its terms confirmed on the vendor's own pages the hint is capped at \"reference\", and rw_decide refuses adopt/extend. Exclusive with no_service_reason.",
-    ),
+      .describe('Why an ML-sounding github/npm/pypi/mcp candidate needs no weights check (loads none, or bundles them under the code license), 10-300 chars. Clears model_weights_unverified. Exclusive with weights_ref.'),
+    service_ref: CandidateRefSchema.optional().describe('For a client, SDK or plugin of a hosted service: its saas:vendor/product ref. Evaluate that service too (same call works). Until its terms are confirmed the hint is capped at reference and rw_decide refuses adopt/extend. Exclusive with no_service_reason.'),
     no_service_reason: z
       .string()
       .min(10, 'no_service_reason must be at least 10 characters: say why this package needs no hosted service (for example "self-hostable: runs fully offline, no API key").')
       .max(300, 'no_service_reason must be at most 300 characters.')
       .optional()
-      .describe(
-        'Only for github/npm/pypi/mcp candidates that look like a client of a hosted service (flag service_client_suspected) but are not: why, 10-300 characters (for example "self-hostable, works without an API key"). Clears that warning, but not upstream_provider_unverified (an LLM gateway needs service_ref or weights_ref). Exclusive with service_ref.',
-      ),
-    saas: SaasTermsInputSchema.optional().describe(
-      "Required for \"saas:\" refs, forbidden otherwise. Required inside: vendor_domains (the vendor's OWN lowercase hostnames, e.g. [\"deepgram.com\"]), lock_in, exit_path. Optional: maturity (default unknown), pricing (default {checked:false}), data_use (default {policy:\"unknown\"}; policy is no_training, opt_out, trains, not_stated = you read the vendor's data page and it does not say whether it trains on data, or unknown = not read yet), sdk_ref. A service whose terms you have not read yet can be registered with just the required fields; its hint is then capped at \"reference\". Give the vendor page you read as `source_url` (an http(s) URL) inside pricing / data_use and the server records it as evidence itself; pricing.source_url implies checked:true. Or quote an `evidence_id` from rw_record_evidence (not both). The server judges each term as first_party (a page on vendor_domains), secondhand (another site) or none; only first_party earns full points, and anything else caps the hint at \"reference\". Do not pass `source`.",
-    ),
+      .describe('Why a candidate flagged service_client_suspected needs no hosted service (self-hosted, no API key), 10-300 chars. Exclusive with service_ref.'),
+    saas: SaasTermsInputSchema.optional().describe('Required for saas: refs, forbidden otherwise. Required: vendor_domains (the vendor\'s own hostnames), lock_in (low|medium|high), exit_path. Optional: maturity (ga|beta|preview|unknown), pricing { source_url | evidence_id, summary }, data_use { policy: no_training|opt_out|trains|not_stated|unknown, source_url | evidence_id, retention }, sdk_ref. source_url = the vendor page you read; the server records it as evidence (pricing.source_url implies checked). Only a page on vendor_domains is first-party; otherwise the hint is capped at reference. Details: reference/scoring.md section 11.'),
   })
   .superRefine((c, ctx) => {
     const scheme = parseRef(c.ref)?.scheme;
@@ -246,7 +234,7 @@ export const evaluateInputShape = {
   project_root: z
     .string()
     .optional()
-    .describe('Project directory that holds .recyclewheel/ledger.jsonl. Default: RECYCLEWHEEL_PROJECT_ROOT or the working directory.'),
+    .describe('Project directory holding .recyclewheel/ (default: the server project root).'),
 };
 export const EvaluateInputSchema = z.object(evaluateInputShape);
 export type EvaluateToolInput = z.infer<typeof EvaluateInputSchema>;
@@ -297,7 +285,7 @@ const PROBE_REFS = ['github:a/b', 'npm:a', 'pypi:a', 'mcp:a'] as const;
  * the per-source ones in the order given. Independent of how `ctx.enrichers`
  * was assembled.
  */
-function orderEnrichers(enrichers: readonly Enricher[]): Enricher[] {
+export function orderEnrichers(enrichers: readonly Enricher[]): Enricher[] {
   const breadth = (e: Enricher): number => PROBE_REFS.filter((ref) => e.supports(ref)).length;
   return enrichers
     .map((enricher, index) => ({ enricher, index, breadth: breadth(enricher) }))
@@ -345,7 +333,7 @@ function githubRefFromRepositoryUrl(url: string | undefined): string | undefined
 
 const REGISTRY_SCHEMES: readonly RefScheme[] = ['npm', 'pypi', 'mcp'];
 
-async function enrichRef(
+export async function enrichRef(
   enrichers: readonly Enricher[],
   ref: string,
   deep: boolean,
@@ -361,7 +349,7 @@ async function enrichRef(
   return results;
 }
 
-interface Merged {
+export interface Merged {
   metrics: Metrics;
   license_spdx: string | null;
   license_source: LicenseVerdict['source'];
@@ -381,7 +369,7 @@ const BOOLEAN_RISK_METRICS: ReadonlySet<string> = new Set(['archived', 'deprecat
  * before repository-level), except `archived`/`deprecated`, where any `true`
  * wins. `missing` is the union minus whatever another enricher supplied.
  */
-function mergeEnrichment(results: readonly EnrichOutput[]): Merged {
+export function mergeEnrichment(results: readonly EnrichOutput[]): Merged {
   const shape = EvaluationMetricsSchema.shape as Record<string, z.ZodType>;
   const collected: Record<string, unknown> = {};
   for (const r of results) {
@@ -1058,7 +1046,7 @@ export function registerEvaluateTool(server: McpServer, ctx: AppContext): void {
     {
       title: 'Evaluate candidates',
       description:
-        'Step 4 of the reuse-first workflow. For 1-5 candidates of a component, fetch maintenance, popularity, community and dependency metrics, judge the license against the project, score each candidate 0-100 together with your fit rating, and get a recommendation (adopt | extend | reference | build). Records the evaluations and returns evidence_id (this tool writes to .recyclewheel/ledger.jsonl and is not read-only). rw_decide requires an evaluation here before adopt or extend.',
+        'Step 4. Score 1-5 candidates of a component (maintenance, popularity, community, dependencies, license vs the project, your fit) and get hints adopt | extend | reference | build. Writes evaluations and evidence to the ledger (not read-only); rw_decide needs an evaluation before adopt/extend. deep:true (GitHub release and contributors) only for the final candidate.',
       inputSchema: evaluateInputShape,
       outputSchema: EvaluateOutputSchema.shape,
       // Appends evaluations and evidence to the ledger, so not read-only.

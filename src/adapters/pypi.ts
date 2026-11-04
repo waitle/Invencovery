@@ -404,6 +404,7 @@ function worstFailure(failures: FetchStatus[]): 'rate_limited' | 'offline' | 'er
 export function createPypiEnricher(deps: { http: HttpClient }): Enricher {
   const { http } = deps;
   return {
+    name: 'pypi',
     supports: (ref) => parseRef(ref)?.scheme === 'pypi',
     async enrich(ref) {
       const parsed = parseRef(ref);

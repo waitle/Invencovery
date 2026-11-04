@@ -32,6 +32,8 @@ import {
   SourceSchema,
 } from '../../types.js';
 import type { AppContext, ToolModule } from '../../types.js';
+import { collectStatus } from '../../doctor.js';
+import type { StatusContext } from '../../doctor.js';
 import { SearchOutputSchema, candidateTableLines, performSearch } from './search.js';
 import type { SearchOutput } from './search.js';
 
@@ -57,26 +59,18 @@ const ProjectInputSchema = z.object({
   license: z
     .string()
     .optional()
-    .describe(
-      'SPDX license expression of the project, e.g. "MIT". Omit when undecided (permissive is assumed), or on a later call to keep the value already recorded.',
-    ),
-  distribution: DistributionSchema.optional().describe(
-    'How the project is delivered: library | application | saas | internal. Default application; omitted on a later call it keeps the value already recorded.',
-  ),
+    .describe('SPDX expression of the project license, e.g. "MIT". Omit when undecided or to keep the recorded value.'),
+  distribution: DistributionSchema.optional().describe('library | application | saas | internal (default application; omitted later, the recorded value is kept).'),
   ecosystems: z
     .array(EcosystemSchema)
     .optional()
-    .describe(
-      'Package ecosystems the project uses (npm, pypi, ...). Selects the registries that are searched. Omitted on a later call it keeps the value already recorded; a given list replaces it.',
-    ),
+    .describe('Package ecosystems (npm, pypi, ...): selects the registries searched. Omitted later, the recorded list is kept.'),
   markets: z
     .array(MarketCodeSchema)
     .min(1)
     .max(MAX_MARKETS)
     .optional()
-    .describe(
-      `Target markets: 1-${MAX_MARKETS} ISO 3166-1 alpha-2 country codes in capitals, or "EU" (e.g. ["KR", "US"]). Laws and store rules differ per country, so concerns_checklist adds questions for each and legal_privacy coverage is tracked per market. Omit only when unknown: Hangul or kana in the project text then infers KR or JP (reported as markets.source "inferred"). Markets given in an earlier call are kept when omitted.`,
-    ),
+    .describe(`Target markets, 1-${MAX_MARKETS} codes: ISO 3166-1 alpha-2 in capitals or "EU" (e.g. ["KR", "US"]). Adds per-market legal and store questions; legal_privacy coverage is tracked per market. Omit only when unknown (Hangul or kana infer KR or JP); earlier values are kept when omitted.`),
 });
 
 const ComponentInputSchema = z.object({
@@ -91,7 +85,7 @@ const ComponentInputSchema = z.object({
     .array(z.string().min(1).max(MAX_NAME_CHARS))
     .min(1)
     .max(MAX_KEYWORDS)
-    .describe(`1-${MAX_KEYWORDS} search keywords (3-6 works best, each at most ${MAX_NAME_CHARS} characters); these become the search queries.`),
+    .describe(`1-${MAX_KEYWORDS} search keywords, 3-6 works best, each a 1-3 word search term (a library name, the problem domain, a synonym), not a sentence.`),
   ecosystem: EcosystemSchema.optional().describe('Ecosystem of this component when it differs from the project.'),
   kind: z.enum(['library', 'service', 'tool', 'ui', 'glue']).optional(),
   parent_id: z.string().optional().describe('Id of the parent component.'),
@@ -111,19 +105,15 @@ export const decomposeInputShape = {
   replace: z
     .boolean()
     .optional()
-    .describe(
-      'Default false: upsert by id. true marks components missing from this list as superseded (reported as a warning; the append-only ledger keeps them).',
-    ),
+    .describe('Default false (upsert by id). true marks components missing from this list as superseded (warning; the ledger keeps them).'),
   search: z
     .boolean()
     .optional()
-    .describe(
-      'Default false. true also runs the first rw_search round for every non-trivial component right away (same budget, evidence and output as rw_search, returned per component in `searches`), so one call replaces N rw_search calls. Call rw_search yourself afterwards only where results are thin.',
-    ),
+    .describe('Default false. true runs the first rw_search round for every non-trivial component in this call (same budget and evidence; results in searches[]), replacing N rw_search calls. Re-search only thin components.'),
   project_root: z
     .string()
     .optional()
-    .describe('Project directory that holds .recyclewheel/ledger.jsonl. Default: RECYCLEWHEEL_PROJECT_ROOT or the working directory.'),
+    .describe('Project directory holding .recyclewheel/ (default: the server project root).'),
 };
 export const DecomposeInputSchema = z.object(decomposeInputShape);
 export type DecomposeToolInput = z.infer<typeof DecomposeInputSchema>;
@@ -174,6 +164,16 @@ export const DecomposeOutputSchema = z.object({
   ),
   /** Target markets used for the checklist: `input` as given, `inferred` from the project text, `none` when unknown (see warnings). */
   markets: z.object({ codes: z.array(z.string()), source: z.enum(['input', 'inferred', 'none']) }),
+  /** What rw_status would report, so the preflight needs no separate call: GitHub auth, offline mode, enabled sources, ledger health. */
+  preflight: z
+    .object({
+      github_auth: z.enum(['env', 'gh_cli', 'none']),
+      offline: z.boolean(),
+      sources: z.array(z.string()),
+      ledger_exists: z.boolean(),
+      warnings: z.array(z.string()),
+    })
+    .optional(),
   /** Project fields (license, distribution, ecosystems, markets) that this call omitted and kept from the ledger. */
   inherited_project_fields: z.array(z.string()).optional(),
   ledger_path: z.string(),
@@ -242,6 +242,12 @@ function summaryText(out: DecomposeOutput, projectName: string): string {
       if (s.budget.warning) lines.push(`Budget warning: ${softLine(s.budget.warning)}`);
     }
   }
+  if (out.preflight !== undefined) {
+    const p = out.preflight;
+    const auth = p.github_auth === 'none' ? 'none (GitHub search 10/min, code search off)' : p.github_auth;
+    lines.push('', `Preflight: GitHub auth ${auth}; ${p.offline ? 'OFFLINE (cache only)' : 'online'}; sources ${p.sources.join(', ') || 'none'}; ledger ${p.ledger_exists ? 'ok' : 'new'}.`);
+    for (const w of p.warnings) lines.push(`- ${softLine(w)}`);
+  }
   lines.push(
     '',
     out.markets.source === 'none'
@@ -284,6 +290,23 @@ async function mapLimited<T, R>(items: readonly T[], concurrency: number, fn: (i
 }
 
 type SearchEntry = NonNullable<DecomposeOutput['searches']>[number];
+
+/** The rw_status facts an agent needs before searching, or undefined when the status cannot be collected (never fails the call). */
+async function collectPreflight(ctx: AppContext, ledgerPath: string): Promise<DecomposeOutput['preflight']> {
+  try {
+    const projectRoot = ledgerPath.replace(/[\\/]\.recyclewheel[\\/]ledger\.jsonl$/, '');
+    const report = await collectStatus(ctx as StatusContext, { projectRoot });
+    return {
+      github_auth: report.github_auth,
+      offline: report.offline,
+      sources: report.adapters.filter((a) => a.enabled).map((a) => a.source),
+      ledger_exists: report.ledger_exists,
+      warnings: report.warnings,
+    };
+  } catch {
+    return undefined;
+  }
+}
 
 /** The first search round of every planned (non-trivial, searchable) component, in plan order. */
 async function runFirstRound(
@@ -332,6 +355,7 @@ async function handleDecompose(ctx: AppContext, input: DecomposeToolInput): Prom
       ...validation.components.flatMap((c) => [c.name, c.description, ...c.keywords]),
     ].join(' ');
     const searches = input.search === true ? await runFirstRound(ctx, plan, input.project_root) : undefined;
+    const preflight = await collectPreflight(ctx, ledger.path);
     // A searched component is now `searching`; report the status after the round.
     const after = searches !== undefined ? ledger.read() : undefined;
     const statusOf = (id: string, fallback: string): string => after?.components.find((c) => c.id === id)?.status ?? fallback;
@@ -339,6 +363,7 @@ async function handleDecompose(ctx: AppContext, input: DecomposeToolInput): Prom
       components: validation.components.map((c) => ({ id: c.id, name: c.name, status: statusOf(c.id, c.status) as typeof c.status })),
       search_plan: plan,
       ...(searches !== undefined ? { searches } : {}),
+      ...(preflight !== undefined ? { preflight } : {}),
       concerns_checklist: buildConcernsChecklist(concernText, validation.project.distribution, validation.markets.codes),
       markets: validation.markets,
       ...(validation.inherited.length > 0 ? { inherited_project_fields: validation.inherited } : {}),
@@ -371,7 +396,7 @@ export function registerDecomposeTool(server: McpServer, ctx: AppContext): void 
     {
       title: 'Decompose a project into components',
       description:
-        'Step 2 of the reuse-first workflow. Record the project and its components (1-30, each with 3-6 short keywords) in the ledger and get a deterministic search plan: per relevant source a short primary query plus alternatives built from the remaining keywords (rw_search runs those while results are thin). Trivial components are skipped; components that sound like ML also get a Hugging Face model query (hf_models). With search: true the first rw_search round of every non-trivial component runs in this call and comes back in `searches` (one call instead of N). The result also carries concerns_checklist: cross-cutting concerns (cost, distribution policy, legal/privacy, operations, security) that package search does not reveal; research each on the web and record it with rw_record_evidence(concern=...). Call this before rw_search.',
+        'Step 2. Record the project and its 1-30 components (3-6 short keywords each) and get the per-source search plan, a preflight (GitHub auth, offline, enabled sources) and concerns_checklist: cross-cutting concerns (cost, distribution policy, legal/privacy, operations, security) to research on the web and record with rw_record_evidence concern=.... search:true also runs the first search round of every non-trivial component here (searches[]).',
       inputSchema: decomposeInputShape,
       outputSchema: DecomposeOutputSchema.shape,
       // Without `search` the call is an idempotent upsert; with it, searches are recorded as evidence (open world, not idempotent).

@@ -318,4 +318,46 @@ describe('rw_decide', () => {
     expect(state.components[0]!.status).toBe('decided');
     expect(state.decisions[0]!.evidence_ids).toEqual([search.evidence_id, evaluated.evidence_id]);
   });
+
+  it('decisions[]: records several components in one call, reports a rejected item and warns once', async () => {
+    h = await createHarness();
+    await seedComponents(h, [component('Markdown'), component('Tiny', { trivial: true }), component('Other')]);
+    const r = await h.call('rw_decide', {
+      decisions: [
+        { component_id: 'tiny', decision: 'build', build_reason: 'trivial', rationale: 'Standard library covers it entirely.' },
+        { component_id: 'markdown', decision: 'adopt', ref: 'npm:marked', rationale: 'Never evaluated, so this one must be rejected.' },
+        { component_id: 'other', decision: 'build', build_reason: 'trivial', rationale: 'A few lines of glue around the chosen parts.' },
+      ],
+    });
+    expect(r.isError).toBe(false);
+    const out = DecideOutputSchema.parse(r.structured);
+    expect(out.results.map((x) => [x.component_id, x.decision_id !== undefined, x.error !== undefined])).toEqual([
+      ['tiny', true, false],
+      ['markdown', false, true],
+      ['other', true, false],
+    ]);
+    expect(out.results[1]!.error).toContain('rw_evaluate');
+    expect(out.decision_id).toBeUndefined();
+    expect(h.state().decisions.map((d) => d.component_id).sort()).toEqual(['other', 'tiny']);
+    expect(h.state().components.find((c) => c.id === 'markdown')!.status).not.toBe('decided');
+    expect(r.text).toContain('2 of 3 decision(s) recorded');
+    expect(r.text).toContain('**rejected**');
+    // Cross-cutting warnings appear once, not once per decision.
+    expect(out.warnings.filter((w) => w.includes('cost')).length).toBe(1);
+  });
+
+  it('decisions[]: a batch of one behaves like the single form; mixing both forms is rejected', async () => {
+    h = await createHarness();
+    await seedComponents(h, [component('Tiny', { trivial: true })]);
+    const one = await h.call('rw_decide', { decisions: [{ component_id: 'tiny', decision: 'build', build_reason: 'trivial', rationale: 'Standard library covers it entirely.' }] });
+    expect(DecideOutputSchema.parse(one.structured).decision_id).toMatch(/^dec_/);
+    const mixed = await h.call('rw_decide', {
+      component_id: 'tiny',
+      decisions: [{ component_id: 'tiny', decision: 'build', build_reason: 'trivial', rationale: 'Standard library covers it entirely.' }],
+    });
+    expect(mixed.isError).toBe(true);
+    const missing = await h.call('rw_decide', { component_id: 'tiny' });
+    expect(missing.isError).toBe(true);
+    expect(missing.text).toContain('decision');
+  });
 });

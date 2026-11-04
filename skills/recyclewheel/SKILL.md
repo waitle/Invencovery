@@ -34,13 +34,13 @@ description: >-
 
 ### Step 0. Preflight
 
-1. `rw_status`를 호출한다. 이유: 토큰, 오프라인, 예산, 원장 위치를 한 번에 알 수 있다.
-2. 도구 목록에 `rw_status`가 없거나 호출이 실패하면 MCP 서버가 없는 것이다. [reference/manual-mode.md](reference/manual-mode.md)를 읽고 그 절차로 Step 1~9를 수행한다.
-3. `ledger_exists: false`와 함께 원장 위치 경고(링크 거부)가 있으면 원장 도구가 모두 거부된다. 사용자에게 알리고, 링크를 임의로 지우지 않는다. 이유: 원장 경로가 링크이면 프로젝트 밖을 가리킬 수 있어 사용자가 확인해야 한다.
-4. `offline: true`이거나 모든 어댑터가 막혔으면(`degraded`) 사용자에게 한 줄로 알리고 계속한다. 캐시 결과와 WebSearch 증거만으로 진행한다.
-5. `rw_status.budget`의 값이 이 문서의 기본 예산(아래)보다 우선한다.
+1. 별도 호출은 필요 없다. Step 2의 `rw_decompose` 출력에 `preflight`(토큰 출처, 오프라인, 활성 소스, 원장 경고)와 `budget`이 함께 온다. `rw_status`는 문제를 진단할 때만 부른다. 이유: 호출 한 번이 모델 턴 한 번이다.
+2. 도구 목록에 `rw_decompose`가 없거나 호출이 실패하면 MCP 서버가 없는 것이다. [reference/manual-mode.md](reference/manual-mode.md)를 읽고 그 절차로 Step 1~9를 수행한다.
+3. `preflight.warnings`에 원장 위치 경고(링크 거부)가 있으면 원장 도구가 모두 거부된다. 사용자에게 알리고, 링크를 임의로 지우지 않는다. 이유: 원장 경로가 링크이면 프로젝트 밖을 가리킬 수 있어 사용자가 확인해야 한다.
+4. `offline: true`이거나 모든 소스가 막혔으면(`degraded`) 사용자에게 한 줄로 알리고 계속한다. 캐시 결과와 WebSearch 증거만으로 진행한다.
+5. 출력의 `budget` 값이 이 문서의 기본 예산(아래)보다 우선한다.
 
-완료 기준: `rw_status` 출력이 있거나, 수동 모드로 전환했음을 사용자에게 알렸다.
+완료 기준: `rw_decompose` 출력이 있거나, 수동 모드로 전환했음을 사용자에게 알렸다.
 
 ### Step 1. 내부 재사용 먼저
 
@@ -73,7 +73,7 @@ description: >-
 
 trivial이 아닌 컴포넌트마다 반복한다.
 
-1. `rw_decompose({ search: true })`의 `searches[]`에 그 컴포넌트의 결과가 있으면 그것이 첫 라운드다(`evidence_id` 기록). 없으면 `rw_search({ component_id })`를 호출한다. 소스는 `search_plan`에 따르고, 서버는 소스마다 짧은 쿼리 여러 개를 돌려 ref 기준으로 합친다(`[N hits]`는 여러 쿼리가 돌려준 후보라는 뜻이고, `(+npm:...)`는 다른 소스의 같은 프로젝트가 병합된 것이다).
+1. `rw_decompose({ search: true })`의 `searches[]`에 그 컴포넌트의 결과가 있으면 그것이 첫 라운드다(`evidence_id` 기록). 없으면 `rw_search({ component_id })`를 호출한다. 소스는 `search_plan`에 따르고, 서버는 소스마다 짧은 쿼리 여러 개를 돌려 ref 기준으로 합친다(`[N hits]`는 여러 쿼리가 돌려준 후보라는 뜻이고, `(+npm:...)`는 다른 소스의 같은 프로젝트가 병합된 것이다). 상위 5개의 **Preview** 열(`63/80 compatible [stale]`)은 fit을 뺀 점수(0~80)와 프로젝트 기준 라이선스 판정이다. GitHub API를 쓰지 않은 가벼운 조회라서 기록되지 않으며, `rw_evaluate`가 정식 평가다.
 2. 후보 중 fit ≥ 3이 될 만한 것이 없으면 쿼리를 바꿔(동의어, 상위 개념, `query` 직접 지정) `rw_search`를 1회 더 한다. `query`를 직접 주면 소스마다 그 쿼리 하나만 보낸다. 긴 문장이 아닌 2~4단어로 준다.
 3. 그래도 빈약하면 WebSearch를 1~2회 한다: `"<topic> library <ecosystem>"`, `"awesome <topic>"`. 결과는 `rw_record_evidence({ kind: 'web', tool: 'WebSearch', query, results, summary })`로 남긴다. 결과가 0건이어도 남긴다("없음"도 증거다).
 4. 구체적인 구현 패턴이 필요하면 GitHub 코드 검색(`sources: ['github_code']`, 토큰 필요) 또는 Grep MCP를 쓰고, 결과를 `kind: 'code_search'`로 남긴다.
@@ -81,7 +81,7 @@ trivial이 아닌 컴포넌트마다 반복한다.
 
 교차 관심사 조사는 컴포넌트 검색이 끝난 뒤 프로젝트 전체에 한 번 한다.
 
-6. `concerns_checklist`의 5개 관심사마다 WebSearch/WebFetch로 **최소 1회** 조사한다. `questions`와 `search_hints`가 출발점이고, 서비스·제품 이름은 직접 채운다. 결과는 `rw_record_evidence({ concern, kind: 'web', query, results, summary })`로 남긴다. 컴포넌트에 묶이지 않으면 `component_id`를 생략한다(프로젝트 전체 증거).
+6. `concerns_checklist`에서 `relevance: likely`인 관심사는 WebSearch/WebFetch로 **1회** 조사한다(`questions`와 `search_hints`가 출발점, 서비스·제품 이름은 직접 채운다). `consider`인 관심사는 작업에서 신호가 보일 때만 조사하고, 아니면 조사 없이 "신호 없음: <이유>"로 기록한다. 이유: 관심사 5개를 모두 2회씩 검색하면 웹 호출 10회가 되어 전체 시간의 절반을 먹는다. 결과는 **한 번의** `rw_record_evidence({ entries: [{ concern, kind, query, results, summary }, ...] })`로 남긴다(항목별로 기록·거부가 따로 보고된다). 컴포넌트에 묶이지 않으면 `component_id`를 생략한다(프로젝트 전체 증거).
    - `project.markets`가 있으면 `legal_privacy`는 **시장마다** 따로 조사하고 `rw_record_evidence({ concern: 'legal_privacy', market: 'KR', ... })`처럼 `market`을 붙여 남긴다. `market`은 `concern`과 함께만 쓸 수 있다. `legal_privacy`는 법이 나라마다 달라서 시장이 있으면 `market`을 붙인 증거로만 확인으로 세고(없으면 일반 증거로 충족), 시장별로 증거가 없으면 서버가 `cross-cutting concern not checked for market <코드>: legal_privacy` 경고를 낸다. `distribution_policy`는 스토어 규정이 대체로 전 세계 공통이라 **`market` 없는 증거가 1건 이상**이어야 확인이다. 한 나라의 규정(예: 한국 과징금 기사)만 `market`을 붙여 남기면 `cross-cutting concern not checked: distribution_policy (only market-specific evidence)` 경고가 남는다. 이유: 시장 한 곳의 근거로 Apple 3.1.1(구독 결제)과 5.1.2(i)(개인정보를 제3자 AI에 보내기 전 고지·동의) 같은 공통 규정을 놓친 적이 있다. 시장별 질문은 따로 `market`을 붙여 남긴다.
    - 언어나 지역에 묶인 컴포넌트(음성 인식, 번역, 형태소 분석, 결제, 본인 인증)의 대상 시장이 영어권이 아니면, 영어 검색과 별개로 그 시장의 현지 벤더·서비스를 **1회** 더 검색한다(예: 한국어 음성 인식이면 국내 벤더). 결과는 `rw_record_evidence`로 남기고 summary에 왜 현지 검색을 했는지 적는다. 이유: 영어 검색만으로는 현지 벤더가 나오지 않는다.
 7. 적용되지 않는 관심사도 건너뛰지 않는다. 이유를 확인하고 `rw_record_evidence({ concern, kind: 'manual', summary: '해당 없음: <이유>' })`로 남긴다. 이유: 서버는 증거가 없는 관심사를 `cross-cutting concern not checked: <concern>` 경고로 표시하는데, "조사 안 함"과 "해당 없음"을 구분하는 것은 이유가 적힌 기록뿐이다.
@@ -90,7 +90,7 @@ trivial이 아닌 컴포넌트마다 반복한다.
 
 ### Step 4. 평가
 
-1. 컴포넌트당 상위 후보를 **최대 5개** 고른다. 중복 ref(`also_known_as`)는 한 후보로 센다.
+1. 컴포넌트당 상위 후보를 **최대 5개** 고른다. 중복 ref(`also_known_as`)는 한 후보로 센다. Preview가 있으면 그것으로 고른다: `incompatible`은 빼고, `base_score + 4×fit ≥ 70`이 될 수 있는 후보를 우선한다(fit 4면 base 54 이상). 보통 2~3개면 충분하다. 이유: 평가 호출마다 GitHub API와 모델 턴을 쓴다.
 2. 후보마다 fit(0~5)과 `fit_reason`(10자 이상, 구체적 근거)을 정한다. 숫자 기준:
 
 | fit | 기준 |
@@ -125,7 +125,7 @@ trivial이 아닌 컴포넌트마다 반복한다.
 
 ### Step 5. 결정
 
-컴포넌트마다 `rw_decide`를 호출한다. 필드: `decision`, `ref`, `version`, `rationale`(20자 이상), `alternatives`(탈락 후보와 `why_not`), `build_reason`, `attribution`.
+모든 컴포넌트의 결정을 **한 번의** `rw_decide({ decisions: [...] })`로 기록한다(항목 필드: `component_id`, `decision`, `ref`, `version`, `rationale`(20자 이상), `alternatives`(탈락 후보와 `why_not`), `build_reason`, `attribution`). 항목은 각자 검증·기록되고 거부된 항목만 `results[].error`로 돌아오므로, 그것만 고쳐 다시 보낸다. 컴포넌트가 하나면 같은 필드를 최상위에 둬도 된다.
 
 | decision | 쓰는 때 | 서버가 요구하는 것 |
 |---|---|---|
@@ -210,6 +210,7 @@ trivial이 아닌 컴포넌트마다 반복한다.
 | WebSearch 쿼리 | 2 |
 | 교차 관심사 WebSearch 쿼리 | 관심사당 2, `legal_privacy`는 시장 수만큼 곱함 (경고만) |
 | 컴포넌트 수 (작업 전체) | 10 이하 |
+| MCP 호출 수 (작업 전체, 기준) | `rw_decompose(search)` 1 + `rw_evaluate` 컴포넌트당 1 + `rw_decide` 1 + `rw_record_evidence` 1 + `rw_ledger` 1 |
 
 - `rw_search`가 `warning`을 반환하면 그 컴포넌트는 추가 검색 없이 결정한다.
 - 서버는 예산의 2배를 넘으면 `force`와 `force_reason` 없이는 거부한다. `force`는 사용자가 더 찾아보라고 요청했을 때만 쓴다. 이유: 반복 검색은 레이트리밋과 토큰만 소모하고 결정을 개선하지 못하는 경우가 많다.
@@ -220,12 +221,12 @@ trivial이 아닌 컴포넌트마다 반복한다.
 
 | 도구 | 용도 | 기록되는 것 |
 |---|---|---|
-| `rw_status` | 환경, 예산, 원장 위치, 교차 관심사 확인 현황 점검 | 없음 |
+| `rw_status` | 진단용: 환경, 예산, 원장 위치, 교차 관심사 확인 현황 (평소에는 `rw_decompose`의 `preflight`로 충분) | 없음 |
 | `rw_decompose` | 프로젝트(대상 시장 포함)와 컴포넌트 등록, 검색 계획과 교차 관심사 체크리스트 생성. `search: true`면 첫 검색 라운드까지 | project, component (+ search evidence) |
 | `rw_search` | 소스별 후보 검색 | search evidence |
 | `rw_evaluate` | 후보 점수화와 라이선스 판정 | evaluation, evaluate evidence |
-| `rw_record_evidence` | WebSearch, 코드 검색, 수동 확인 결과 기록. `concern`을 주면 교차 관심사 조사로, 거기에 `market`을 더하면 시장별 조사로 기록 | web/code_search/manual evidence (+ concern, market) |
-| `rw_decide` | 결정 기록과 규칙 검증 | decision |
+| `rw_record_evidence` | WebSearch, 코드 검색, 수동 확인 결과 기록. `concern`을 주면 교차 관심사 조사로, 거기에 `market`을 더하면 시장별 조사로 기록. `entries[]`로 여러 건을 한 번에 | web/code_search/manual evidence (+ concern, market) |
+| `rw_decide` | 결정 기록과 규칙 검증. `decisions[]`로 여러 컴포넌트를 한 번에 | decision |
 | `rw_ledger` | 원장 조회, Markdown/NOTICES 내보내기 | 없음 (`write_to`가 있으면 파일 생성) |
 | `rw_cache` | 캐시 통계, 조회, 퍼지 | 없음 |
 

@@ -330,4 +330,24 @@ describe('mergeSearchResults', () => {
     expect(mergeSearchResults([github, npm], 2).map((c) => c.ref)).toEqual(['github:o/r', 'github:o/x']);
     expect(mergeSearchResults([github, npm], 0)).toEqual([]);
   });
+
+describe('dedupe preferEcosystem', () => {
+  const gh = { ref: 'github:o/x', source: 'github_repo', name: 'o/x', url: 'u', description: 'repo', stars: 10, license_spdx: null, matched_via: { query: 'q', rank: 1 }, provenance: 'live' } as const;
+  const npm = { ref: 'npm:x', source: 'npm', name: 'x', url: 'u', description: 'pkg', downloads_weekly: 5, license_spdx: 'MIT', repository_url: 'https://github.com/o/x', matched_via: { query: 'q', rank: 2 }, provenance: 'live' } as const;
+
+  it('lets the registry package of the ecosystem lead, keeping the merged metrics and the published license', () => {
+    const [m] = dedupe([gh, npm], { preferEcosystem: 'npm' });
+    expect(m?.ref).toBe('npm:x');
+    expect(m?.also_known_as).toEqual(['github:o/x']);
+    expect(m?.stars).toBe(10);
+    expect(m?.downloads_weekly).toBe(5);
+    expect(m?.license_spdx).toBe('MIT');
+    expect(m?.matched_via).toEqual({ query: 'q', rank: 1, hits: 2 });
+  });
+
+  it('keeps GitHub first without the option or for another ecosystem', () => {
+    expect(dedupe([gh, npm])[0]?.ref).toBe('github:o/x');
+    expect(dedupe([gh, npm], { preferEcosystem: 'pypi' })[0]?.ref).toBe('github:o/x');
+  });
+});
 });

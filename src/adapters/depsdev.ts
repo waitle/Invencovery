@@ -404,6 +404,7 @@ type Metrics = Evaluation['metrics'];
 export function createDepsDevEnricher(deps: { http: HttpClient }): Enricher {
   const { http } = deps;
   return {
+    name: 'depsdev',
     supports(ref) {
       const p = parseRef(ref);
       return p?.scheme === 'github' || p?.scheme === 'npm' || p?.scheme === 'pypi';

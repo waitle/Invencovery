@@ -233,6 +233,20 @@ export const CandidateSchema = z.object({
   repository_url: z.string().optional(),
   /** Refs of the same project from other sources, merged by dedupe. */
   also_known_as: z.array(CandidateRefSchema).optional(),
+  /**
+   * Cheap pre-evaluation computed by `rw_search` for the top candidates from
+   * deps.dev and the registries (no GitHub API call, no agent `fit`): the score
+   * axes except fit (0-80), the license verdict against the project, and the
+   * risk flags. Not an evaluation; `rw_evaluate` records the real one.
+   */
+  preview: z
+    .object({
+      base_score: CountSchema,
+      license_verdict: z.enum(['compatible', 'conditional', 'incompatible', 'unknown']),
+      license_spdx: z.string().nullable(),
+      flags: z.array(z.string()),
+    })
+    .optional(),
   matched_via: z.object({
     /** The first query that returned the candidate. */
     query: z.string(),
@@ -687,6 +701,8 @@ export interface SourceAdapter {
 
 /** Detail lookup for evaluation (github, npm, pypi, depsdev, mcp-registry each implement one). */
 export interface Enricher {
+  /** Short identifier (`depsdev`, `github`, `npm`, ...); `rw_search` previews skip the rate-limited `github` one. */
+  name?: string;
   supports(ref: CandidateRef): boolean;
   enrich(
     ref: CandidateRef,

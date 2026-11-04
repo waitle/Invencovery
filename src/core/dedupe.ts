@@ -148,10 +148,25 @@ function repoKeyOf(c: Candidate): string | undefined {
 /** Representative preference: github first, then registries. */
 const SOURCE_PRIORITY: readonly Source[] = ['github_repo', 'github_code', 'npm', 'pypi', 'mcp_registry', 'hf_models'];
 
+/** Source whose refs name what gets installed in an ecosystem; its member leads a merged group when `preferEcosystem` says so. */
+const ECOSYSTEM_SOURCE: Partial<Record<string, Source>> = { npm: 'npm', pypi: 'pypi', mcp: 'mcp_registry' };
+
+export interface DedupeOptions {
+  /**
+   * Ecosystem of the component (or project). A merged group then puts the
+   * candidate from that ecosystem's registry first (`npm:x (+github:o/x)`): the
+   * package is what the agent installs and pins, and its license is the one
+   * that applies to the published version, which can differ from the GitHub
+   * default branch. Without it the GitHub candidate leads.
+   */
+  preferEcosystem?: string;
+}
+
 /** Least trusted wins when members disagree. */
 const PROVENANCE_ORDER: readonly Provenance[] = ['live', 'local_cache', 'remote_cache', 'stale_cache'];
 
-function sourceRank(source: Source): number {
+function sourceRank(source: Source, preferred: Source | undefined): number {
+  if (preferred !== undefined && source === preferred) return -1;
   const i = SOURCE_PRIORITY.indexOf(source);
   return i === -1 ? SOURCE_PRIORITY.length : i;
 }
@@ -245,10 +260,12 @@ function mergeGroup(members: readonly Candidate[], repoKey: string | undefined):
  * Merges candidates describing the same project. Output keeps the position of
  * each group's earliest member. Singletons are returned as the same object.
  * The representative is the github candidate when present, otherwise
- * npm > pypi > mcp_registry; its `also_known_as` lists every merged ref.
+ * npm > pypi > mcp_registry, unless `opts.preferEcosystem` names the ecosystem
+ * whose registry candidate should lead; its `also_known_as` lists every merged ref.
  */
-export function dedupe(candidates: readonly Candidate[]): Candidate[] {
+export function dedupe(candidates: readonly Candidate[], opts: DedupeOptions = {}): Candidate[] {
   const n = candidates.length;
+  const preferred = opts.preferEcosystem !== undefined ? ECOSYSTEM_SOURCE[opts.preferEcosystem] : undefined;
   const parent = candidates.map((_, i) => i);
   const find = (i: number): number => {
     let root = i;
@@ -353,7 +370,7 @@ export function dedupe(candidates: readonly Candidate[]): Candidate[] {
       const ca = candidates[a] as Candidate;
       const cb = candidates[b] as Candidate;
       return (
-        sourceRank(ca.source) - sourceRank(cb.source) ||
+        sourceRank(ca.source, preferred) - sourceRank(cb.source, preferred) ||
         ca.matched_via.rank - cb.matched_via.rank ||
         a - b
       );
@@ -400,7 +417,8 @@ export function interleaveByRank(candidates: readonly Candidate[]): Candidate[] 
 export function mergeSearchResults(
   perSource: readonly (readonly Candidate[])[],
   maxTotal?: number,
+  opts: DedupeOptions = {},
 ): Candidate[] {
-  const merged = interleaveByRank(dedupe(perSource.flat()));
+  const merged = interleaveByRank(dedupe(perSource.flat(), opts));
   return maxTotal === undefined ? merged : merged.slice(0, Math.max(0, maxTotal));
 }

@@ -617,6 +617,7 @@ export function createGithubEnricher(deps: Pick<GithubAdapterDeps, 'http'>): Enr
     r !== undefined && r.data !== null && r.status >= 200 && r.status < 300;
 
   return {
+    name: 'github',
     supports: (ref) => parseRef(ref)?.scheme === 'github',
 
     async enrich(ref, { deep }): Promise<EnrichResult> {

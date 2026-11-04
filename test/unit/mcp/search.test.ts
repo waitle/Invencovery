@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { SearchOutputSchema, UNSCOPED_COMPONENT_ID, keywordOverlap } from '../../../src/mcp/tools/search.js';
 import { cleanupTmpDirs } from '../../helpers/tmp.js';
-import { PROJECT, candidate, component, createHarness, failingAdapter, fakeAdapter, seedComponents } from './_harness.js';
+import { PROJECT, candidate, component, createHarness, failingAdapter, fakeAdapter, fakeEnricher, seedComponents } from './_harness.js';
 import type { Harness } from './_harness.js';
 
 let h: Harness | undefined;
@@ -39,9 +39,11 @@ describe('rw_search', () => {
     expect(r.isError).toBe(false);
     const out = SearchOutputSchema.parse(r.structured);
 
+    // The project is an npm project: the npm package leads the merged group (it is what gets installed), the repo is its alias.
     // npm answers both keyword queries with the same packages: npm:solo (2 hits) sorts before github:other/x (1 hit) at rank 2.
-    expect(out.candidates.map((c) => c.ref)).toEqual(['github:acme/md', 'npm:solo', 'github:other/x']);
-    expect(out.candidates[0]!.also_known_as).toEqual(['npm:acme-md']);
+    expect(out.candidates.map((c) => c.ref)).toEqual(['npm:acme-md', 'npm:solo', 'github:other/x']);
+    expect(out.candidates[0]!.also_known_as).toEqual(['github:acme/md']);
+    expect(out.candidates[0]!.stars).toBe(900);
     expect(out.candidates[0]!.matched_via.hits).toBe(3);
     expect(out.candidates[0]!.downloads_weekly).toBe(5000);
     expect(out.per_source.map((m) => [m.source, m.status])).toEqual([['github_repo', 'ok'], ['npm', 'ok']]);
@@ -360,6 +362,56 @@ describe('rw_search query alternatives (adaptive)', () => {
     expect(out.candidates).toHaveLength(3);
     const out4 = SearchOutputSchema.parse((await h.call('rw_search', { component_id: 'player', limit_per_source: 4 })).structured);
     expect(out4.candidates).toHaveLength(3);
+  });
+});
+
+describe('rw_search preview (cheap pre-evaluation of the top candidates)', () => {
+  it('previews the top 5 from non-GitHub enrichers, fills a missing license and shows it in the table', async () => {
+    const depsdev = fakeEnricher(['github', 'npm'], (ref) => ({
+      license_spdx: ref === 'github:acme/md' ? 'MIT' : null,
+      license_source: 'depsdev',
+      metrics: ref === 'github:acme/md' ? { stars: 900, last_commit_at: '2026-10-01T00:00:00.000Z', direct_dependencies: 2 } : {},
+    }));
+    depsdev.name = 'depsdev';
+    const github = fakeEnricher(['github'], () => ({ metrics: { stars: 1 } }));
+    github.name = 'github';
+    const many = fakeAdapter('github_repo', () => ({
+      candidates: [1, 2, 3, 4, 5, 6, 7].map((i) =>
+        candidate(i === 1 ? 'github:acme/md' : `github:o/r${i}`, 'github_repo', { license_spdx: null, matched_via: { query: 'q', rank: i } }),
+      ),
+    }));
+    h = await createHarness({ adapters: { github_repo: many }, enrichers: [depsdev, github], env: { RECYCLEWHEEL_SOURCES: 'github_repo' } });
+    await seedComponents(h);
+    const r = await h.call('rw_search', { component_id: 'markdown' });
+    const out = SearchOutputSchema.parse(r.structured);
+    expect(github.calls).toHaveLength(0);
+    expect(depsdev.calls.map((c) => c.ref)).toEqual(['github:acme/md', 'github:o/r2', 'github:o/r3', 'github:o/r4', 'github:o/r5']);
+    const first = out.candidates[0]!;
+    expect(first.license_spdx).toBe('MIT');
+    expect(first.preview).toEqual({ base_score: 66, license_verdict: 'compatible', license_spdx: 'MIT', flags: [] });
+    expect(out.candidates[1]!.preview).toMatchObject({ license_verdict: 'unknown', license_spdx: null });
+    expect(out.candidates[1]!.preview!.flags).toContain('no_license');
+    expect(out.candidates[5]!.preview).toBeUndefined();
+    expect(r.text).toContain('| Preview |');
+    expect(r.text).toContain('66/80 compatible');
+    // Nothing is recorded for a preview: only the search evidence exists.
+    expect(h.state().evaluations).toEqual([]);
+    expect(h.state().evidence).toHaveLength(1);
+  });
+
+  it('can be switched off and never fails the search', async () => {
+    const broken = fakeEnricher(['github'], () => {
+      throw new Error('deps.dev down');
+    });
+    broken.name = 'depsdev';
+    const gh = fakeAdapter('github_repo', () => ({ candidates: [candidate('github:a/b', 'github_repo')] }));
+    h = await createHarness({ adapters: { github_repo: gh }, enrichers: [broken], env: { RECYCLEWHEEL_SOURCES: 'github_repo' } });
+    await seedComponents(h);
+    const on = SearchOutputSchema.parse((await h.call('rw_search', { component_id: 'markdown' })).structured);
+    expect(on.candidates[0]!.preview).toBeUndefined();
+    const off = SearchOutputSchema.parse((await h.call('rw_search', { component_id: 'markdown', preview: false })).structured);
+    expect(off.candidates[0]!.preview).toBeUndefined();
+    expect(broken.calls).toHaveLength(1);
   });
 });
 

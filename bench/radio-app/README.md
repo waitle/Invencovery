@@ -58,3 +58,22 @@ npm run build
 mkdir -p /tmp/rw-bench && cd /tmp/rw-bench
 RECYCLEWHEEL_CACHE_DIR=/tmp/rw-bench/cache node <repo>/bench/radio-app/rwcall.mjs rw_status
 ```
+
+## Tool-side flow cost (headless, no LLM)
+
+`node bench/flow-cost.mjs [--legacy] [--dist <cli.js>]` runs the same four components through the MCP server with a
+fixed, rank-based `fit` (no model), so it measures only what the server side of the workflow costs an agent: tool calls
+(each one is a model turn), wall time, result text (what enters the agent's context) and the tool schema sent on every
+turn. Unauthenticated GitHub, cold cache, 2026-11-04.
+
+| Build and call pattern | Tool calls | Wall | Result text | Schema x calls | Components with candidates |
+|---|---|---|---|---|---|
+| main before 2026-11-04, legacy pattern (status, decompose, search x4, evaluate, decide x N, evidence x5, ledger) | 16 | 7.2 s | ~4.1k tokens | ~88k tokens | 2 of 4 (npm HTTP 400, GitHub 0 hits) |
+| current build, legacy pattern | 20 | 10.3 s | ~8.4k tokens | ~116k tokens | 4 of 4 |
+| current build, current pattern (decompose with search, evaluate x4, decide batch, evidence batch, ledger) | **8** | **7.4 s** | **~5.5k tokens** | **~46k tokens** | **4 of 4** |
+
+With the rank-based fit the current build picks `npm:react-native-track-player`, `npm:radio-browser-api` and
+`npm:react-native-nitro-storage` (extend; a real agent's fit of 4-5 turns the first two into adopt) and keeps
+`npm:icecast-metadata-stats` as a reference. The old build found candidates for only two components and picked
+`github:hussainislive/musically` and `npm:apollo3-cache-persist`. Agent time (WebSearch, judgment, writing) is not in
+this table; see the agent comparison above.

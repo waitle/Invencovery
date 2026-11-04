@@ -252,6 +252,7 @@ function descriptorOf(id: string, doc: z.infer<typeof ModelSchema>): string {
 export function createHuggingfaceEnricher(deps: { http: HttpClient }): Enricher {
   const { http } = deps;
   return {
+    name: 'huggingface',
     supports: (ref) => parseRef(ref)?.scheme === 'hf',
     async enrich(ref) {
       const parsed = parseRef(ref);

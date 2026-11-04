@@ -560,6 +560,7 @@ function unavailable(provenance: Provenance): EnrichResult {
 export function createMcpRegistryEnricher(deps: { http: HttpClient }): Enricher {
   const { http } = deps;
   return {
+    name: 'mcp_registry',
     supports(ref) {
       return parseRef(ref)?.scheme === 'mcp';
     },

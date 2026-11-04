@@ -18,6 +18,7 @@ import { mergeSearchResults, refKey } from '../../core/dedupe.js';
 import { findComponent } from '../../core/ledger.js';
 import { clampInput, codeSpan, cut, oneLine, softLine, stripControlChars, wrapUntrusted } from '../../core/sanitize.js';
 import { CandidateSchema, EcosystemSchema, SourceMetaSchema, SourceSchema, newId } from '../../types.js';
+import { previewCandidates } from './preview.js';
 import type {
   AppContext,
   Candidate,
@@ -70,12 +71,12 @@ export const searchInputShape = {
     .min(1)
     .max(256)
     .optional()
-    .describe('Free-text query. Without it, the component search plan from rw_decompose is used. At least one of component_id and query is required.'),
+    .describe('Free-text query (2-4 words), sent once per source. Without it the planned queries of component_id are used.'),
   sources: z
     .array(SourceSchema)
     .min(1)
     .optional()
-    .describe('Sources to query: github_repo | github_code | npm | pypi | mcp_registry | hf_models (model weights). Default: the planned sources (github_code only when listed here).'),
+    .describe('github_repo | github_code | npm | pypi | mcp_registry | hf_models. Default: the planned sources (github_code only when listed).'),
   ecosystem: EcosystemSchema.optional().describe('Ecosystem filter. Default: the component ecosystem.'),
   limit_per_source: z.number().int().min(1).max(20).optional().describe('Results per source, 1-20. Default 8.'),
   language: z.string().optional().describe('GitHub language qualifier, e.g. "Python".'),
@@ -88,10 +89,14 @@ export const searchInputShape = {
     .describe('Package name guesses for registries without a search API (PyPI probes these names).'),
   force: z.boolean().optional().describe('Continue past the hard search budget; requires force_reason.'),
   force_reason: z.string().optional().describe('Why more rounds are justified (recorded in the budget warning).'),
+  preview: z
+    .boolean()
+    .optional()
+    .describe('Default true: the top 5 candidates get preview (license verdict, score without fit 0-80) from deps.dev and the registries; no GitHub API calls.'),
   project_root: z
     .string()
     .optional()
-    .describe('Project directory that holds .recyclewheel/ledger.jsonl. Default: RECYCLEWHEEL_PROJECT_ROOT or the working directory.'),
+    .describe('Project directory holding .recyclewheel/ (default: the server project root).'),
 };
 export const SearchInputSchema = z.object(searchInputShape);
 export type SearchToolInput = z.infer<typeof SearchInputSchema>;
@@ -401,6 +406,17 @@ function formatCount(n: number | undefined): string {
   return n === undefined ? '-' : String(n);
 }
 
+/** Description characters shown per table row (the full text, up to 200, stays in structuredContent). */
+const MAX_DESCRIPTION_CELL = 140;
+
+/** `61/80 compatible [stale]` for a previewed candidate, `-` otherwise. */
+function previewCell(c: Candidate): string {
+  const p = c.preview;
+  if (p === undefined) return '-';
+  const flags = p.flags.filter((f) => f !== 'archived' && f !== 'deprecated');
+  return cell(`${p.base_score}/80 ${p.license_verdict}${flags.length > 0 ? ` [${flags.join(', ')}]` : ''}`, 120);
+}
+
 /**
  * Candidate table inside the untrusted fence (names, licenses and descriptions
  * come from third parties), or a one-line "none" note. Shared with rw_decompose.
@@ -408,15 +424,15 @@ function formatCount(n: number | undefined): string {
 export function candidateTableLines(candidates: readonly Candidate[], maxRows = MAX_TABLE_ROWS): string[] {
   if (candidates.length === 0) return ['No candidates found.'];
   const table: string[] = [
-    '| # | Candidate | Source | Stars | Weekly downloads | License | Last activity | Description |',
-    '|---|---|---|---|---|---|---|---|',
+    '| # | Candidate | Source | Stars | Weekly downloads | License | Preview | Last activity | Description |',
+    '|---|---|---|---|---|---|---|---|---|',
   ];
   candidates.slice(0, maxRows).forEach((c, i) => {
     const alias = c.also_known_as && c.also_known_as.length > 0 ? ` (+${c.also_known_as.join(', ')})` : '';
     const hits = c.matched_via.hits !== undefined && c.matched_via.hits > 1 ? ` [${c.matched_via.hits} hits]` : '';
     const flags = [c.archived ? 'archived' : '', c.deprecated ? 'deprecated' : ''].filter(Boolean).join(', ');
     table.push(
-      `| ${i + 1} | \`${cell(c.ref, 1100)}\`${cell(alias, 600)}${hits}${flags ? ` [${flags}]` : ''} | ${c.source} | ${formatCount(c.stars)} | ${formatCount(c.downloads_weekly)} | ${cell(c.license_spdx ?? (c.license_spdx === null ? 'none' : '-'))} | ${c.last_activity?.slice(0, 10) ?? '-'} | ${cell(c.description ?? '')} |`,
+      `| ${i + 1} | \`${cell(c.ref, 1100)}\`${cell(alias, 600)}${hits}${flags ? ` [${flags}]` : ''} | ${c.source} | ${formatCount(c.stars)} | ${formatCount(c.downloads_weekly)} | ${cell(c.license_spdx ?? (c.license_spdx === null ? 'none' : '-'))} | ${previewCell(c)} | ${c.last_activity?.slice(0, 10) ?? '-'} | ${cell(c.description ?? '', MAX_DESCRIPTION_CELL)} |`,
     );
   });
   const lines = wrapUntrusted(table);
@@ -456,7 +472,7 @@ function summaryText(args: {
   lines.push('', `Search rounds before this call: ${b.rounds_used}/${b.rounds_limit} (hard limit ${b.hard_limit}).`);
   if (b.warning) lines.push(`Budget warning: ${softLine(b.warning)}`);
   lines.push(
-    'Next: pick up to 5 candidates, rate fit 0-5 with a reason, and call rw_evaluate. Stop searching once a candidate reaches hint "adopt".',
+    'Next: pick up to 5 candidates (Preview = score without fit, 0-80, and the license verdict; adopt needs base plus 4 x fit of at least 70 and a compatible or conditional license), rate fit 0-5 with a reason, and call rw_evaluate. Stop searching once a candidate reaches hint "adopt".',
   );
   return lines.join('\n');
 }
@@ -523,10 +539,23 @@ export async function performSearch(ctx: AppContext, input: SearchToolInput): Pr
   const outcomes = await Promise.all(targets.map((t) => runTarget(ctx, t, input, component, limit)));
 
   const searchedCount = outcomes.filter((o) => o.searched).length;
-  const candidates = mergeSearchResults(
+  // The registry package of the component's ecosystem leads a merged group: it is what gets installed and pinned,
+  // and its license is the published one (a GitHub default branch can carry another license, as react-native-track-player v5 does).
+  const ecosystems = state.project?.ecosystems ?? [];
+  const preferEcosystem = input.ecosystem ?? component?.ecosystem ?? (ecosystems.length === 1 ? ecosystems[0] : undefined);
+  const merged = mergeSearchResults(
     outcomes.map((o) => o.candidates),
     limit * Math.max(1, searchedCount),
+    preferEcosystem !== undefined ? { preferEcosystem } : {},
   );
+  // Preview: license verdict and the fit-free score of the top candidates, so the agent can pick what to evaluate.
+  const candidates =
+    input.preview === false || merged.length === 0
+      ? merged
+      : await previewCandidates(ctx, merged, {
+          projectLicense: state.project?.license,
+          distribution: state.project?.distribution ?? 'application',
+        });
   const perSource = outcomes.map((o) => o.meta);
   const answered = [...new Set(perSource.filter((m) => ANSWERED.has(m.status)).map((m) => m.source))];
   const degraded = answered.length === 0;
@@ -613,7 +642,7 @@ export function registerSearchTool(server: McpServer, ctx: AppContext): void {
     {
       title: 'Search for existing solutions',
       description:
-        'Step 3 of the reuse-first workflow. Search GitHub, npm, PyPI and the MCP registry in parallel for existing solutions to a component, merge duplicates, and record the round as search evidence in the ledger (returns evidence_id; this tool writes to .recyclewheel/ledger.jsonl and is not read-only). Uses the planned queries of component_id unless query is given. A failing source does not fail the call; check per_source and degraded. Respects a per-component round budget.',
+        'Step 3. Search GitHub, npm, PyPI, the MCP registry (and Hugging Face) for a component with its planned queries or a query, merge duplicates, preview the top candidates and record search evidence (writes to the ledger; not read-only). A failing source does not fail the call. Per-component round budget.',
       inputSchema: searchInputShape,
       outputSchema: SearchOutputSchema.shape,
       // Appends search evidence (and a component status update) to the ledger, so not read-only.

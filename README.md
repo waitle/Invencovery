@@ -38,6 +38,25 @@ recyclewheel은 Claude Code 플러그인(스킬 + MCP 서버) 하나로 배포�
 
 웹 검색은 에이전트의 WebSearch/WebFetch가 하고, MCP는 그 결과를 증거로만 기록합니다(`rw_record_evidence`). MCP 서버 안에서는 LLM을 호출하지 않습니다.
 
+## 에이전트 혼자 찾는 것과 비교하면
+
+에이전트가 WebSearch와 curl로 직접 찾는 방식과 견주어 이 도구가 내세우는 것은 네 가지입니다.
+
+- **더 정확하게 찾는다.** 같은 프로젝트의 GitHub 저장소와 npm/PyPI 패키지가 한 행으로 합쳐지고, 설치하게 될 **패키지 ref가 앞에** 옵니다. 라이선스는 배포된 패키지 기준으로 판정합니다(예: `react-native-track-player`는 GitHub 기본 브랜치(v5)가 상업 라이선스지만 npm 4.x는 Apache-2.0이라, GitHub만 보면 `unknown`, npm을 보면 `compatible`). 검색 결과의 상위 5개에는 **Preview**(fit을 뺀 점수 0~80, 프로젝트 기준 라이선스 판정, `stale`/`deprecated` 플래그)가 붙어 평가할 후보를 바로 고를 수 있습니다.
+- **더 적은 호출로 끝난다.** `rw_decompose({ search: true })`가 분해와 모든 컴포넌트의 첫 검색을 한 번에, `rw_decide({ decisions })`와 `rw_record_evidence({ entries })`가 결정과 증거를 한 번에 기록합니다. 4개 컴포넌트 기준 표준 흐름은 **MCP 호출 8번**입니다(호출 한 번이 모델 턴 한 번이므로 토큰과 시간을 함께 줄입니다).
+- **같은 결과를 다시 사지 않는다.** 모든 API 응답이 로컬 SQLite에 캐시되어(ETag 재검증, stale-if-error) 재검색과 재평가는 네트워크 없이 끝납니다.
+- **증거가 남는다.** 모든 결정이 `evidence_id`와 함께 원장에 남고 Reuse Report, NOTICES 초안으로 내보내집니다. 에이전트 혼자 찾으면 남지 않는 부분입니다.
+
+측정값([bench/flow-cost.mjs](bench/flow-cost.mjs), LLM 없이 도구 흐름만 실행, 4개 컴포넌트, 비인증, 빈 캐시, 2026-11-04):
+
+| 흐름 | MCP 호출 | 시간 | 도구 결과 텍스트 | 턴마다 보내는 스키마 × 호출 | 후보를 받은 컴포넌트 |
+|---|---|---|---|---|---|
+| 이전 빌드, 이전 절차(status → decompose → search×4 → evaluate → decide×N → evidence×5 → ledger) | 16 | 7.2 s | 약 4.1k 토큰 | 약 88k 토큰 | 2/4 (npm 400, GitHub 0건) |
+| 현재 빌드, 이전 절차 | 20 | 10.3 s | 약 8.4k 토큰 | 약 116k 토큰 | 4/4 |
+| 현재 빌드, 현재 절차(decompose(search) → evaluate×4 → decide → evidence → ledger) | **8** | **7.4 s** | **약 5.5k 토큰** | **약 46k 토큰** | **4/4** |
+
+에이전트의 WebSearch, 판단, 응답 생성 시간은 이 표에 없습니다. 실제 에이전트 비교는 [bench/radio-app](bench/radio-app/README.md)에 있습니다(이전 절차 기준으로 도구 호출 28회, 약 327초; 그중 검색 9회가 이제 1회로 줍니다).
+
 ## 요구사항
 
 - Node.js **>= 22.13** (내장 `node:sqlite` 사용. 첫 실행 때 `ExperimentalWarning`이 나올 수 있으며 서버가 stderr에서 걸러냅니다).
@@ -109,13 +128,13 @@ claude mcp add recyclewheel --scope user -- node D:\path\to\recyclewheel\dist\cl
 
 기대하는 흐름 (스킬이 지시하는 순서):
 
-1. `rw_status`로 토큰, 오프라인 여부, 예산, 원장 위치를 확인.
-2. 저장소의 manifest와 기존 모듈에서 이미 있는 것을 확인.
-3. `rw_decompose({ ..., search: true })`로 3~10개 컴포넌트로 분해(예: Markdown 파서, PDF 렌더러, CLI 인자 처리)하고, 같은 호출에서 컴포넌트별 첫 검색 라운드를 받습니다. 키워드는 1~3단어의 검색어로 줍니다.
-4. 결과가 빈약한 컴포넌트만 쿼리를 바꿔 `rw_search` → 상위 후보를 `rw_evaluate`(에이전트가 `fit` 0~5와 근거를 입력). 후보가 사전학습 모델을 불러오면 `weights_ref`로 그 모델을, 모델을 불러오지 않으면 `weights_exempt_reason`을, 호스팅 서비스면 `saas:` ref와 `saas` 블록을 넘깁니다(필수는 `vendor_domains`, `lock_in`, `exit_path` 셋이고, 읽은 벤더 페이지는 `source_url`로 적으면 서버가 증거로 기록합니다). SDK·플러그인 후보에는 그 서비스를 `service_ref`로 연결합니다.
-5. `rw_decide`로 `adopt` / `extend` / `reference` / `build` 기록. `build`는 `no_candidate`, `license_incompatible`, `unmaintained_or_risky`, `too_heavy`, `core_differentiator`, `trivial`, `integration_glue` 중 하나의 사유가 필요합니다.
+1. 저장소의 manifest와 기존 모듈에서 이미 있는 것을 확인.
+2. `rw_decompose({ ..., search: true })`로 3~10개 컴포넌트로 분해(예: Markdown 파서, PDF 렌더러, CLI 인자 처리)하고, 같은 호출에서 `preflight`(토큰, 오프라인, 소스, 원장 경고)와 컴포넌트별 첫 검색 라운드(Preview 포함)를 받습니다. 키워드는 1~3단어의 검색어로 줍니다. `rw_status`는 진단할 때만 부릅니다.
+3. 결과가 빈약한 컴포넌트만 쿼리를 바꿔 `rw_search`.
+4. Preview로 고른 상위 후보(보통 2~3개)를 `rw_evaluate`(에이전트가 `fit` 0~5와 근거를 입력). 후보가 사전학습 모델을 불러오면 `weights_ref`로 그 모델을, 모델을 불러오지 않으면 `weights_exempt_reason`을, 호스팅 서비스면 `saas:` ref와 `saas` 블록을 넘깁니다(필수는 `vendor_domains`, `lock_in`, `exit_path` 셋이고, 읽은 벤더 페이지는 `source_url`로 적으면 서버가 증거로 기록합니다). SDK·플러그인 후보에는 그 서비스를 `service_ref`로 연결합니다.
+5. `rw_decide({ decisions: [...] })`로 모든 컴포넌트의 `adopt` / `extend` / `reference` / `build`를 한 번에 기록. `build`는 `no_candidate`, `license_incompatible`, `unmaintained_or_risky`, `too_heavy`, `core_differentiator`, `trivial`, `integration_glue` 중 하나의 사유가 필요합니다.
 6. 새 런타임 의존성이나 `conditional` 라이선스가 있으면 Reuse Report를 보여주고 진행 여부를 확인.
-7. `rw_decompose`의 `concerns_checklist`를 따라 비용, 배포 정책, 법무·개인정보, 운영, 보안을 웹에서 조사하고 `rw_record_evidence({ concern, kind: 'web', ... })`로 기록. 해당 없는 관심사도 이유와 함께 기록합니다.
+7. `rw_decompose`의 `concerns_checklist`를 따라 `likely`인 관심사를 웹에서 조사하고(비용, 배포 정책, 법무·개인정보, 운영, 보안), `consider`인 관심사는 신호가 없으면 이유만 적어, `rw_record_evidence({ entries: [...] })` 한 번으로 기록합니다.
 8. 최종 응답에 Reuse Report 요약을 포함. 결정은 `<프로젝트>/.recyclewheel/ledger.jsonl`에 쌓이며 git에 커밋하는 것을 권장합니다.
 
 보고서는 `rw_ledger`(또는 CLI `recyclewheel ledger export`)로 내보냅니다. 형식 예시는 다음과 같습니다(값은 형식을 보이기 위한 **가상의 예**이며 실제 검색 결과가 아닙니다).
@@ -132,14 +151,16 @@ claude mcp add recyclewheel --scope user -- node D:\path\to\recyclewheel\dist\cl
 
 | 도구 | 성격 | 설명 | 주요 인자 |
 |---|---|---|---|
-| `rw_status` | read-only | 버전, 토큰 출처(`env`/`gh_cli`/`none`), 오프라인 여부, 원격 캐시 상태, 레이트리밋, 어댑터 활성 여부, 예산, 캐시 크기, 원장 위치, 교차 관심사 커버리지(`cross_cutting[{ concern, checked, evidence_count, markets? }]`, `markets`는 대상 시장이 있을 때 `legal_privacy`의 시장별 현황). `.recyclewheel`/`ledger.jsonl`이 링크이면 `ledger_exists:false`와 경고. 결정이 1건 이상인데 확인하지 않은 관심사가 있으면 `cross-cutting concern not checked: <concern>` 경고 | `project_root` |
-| `rw_decompose` | 원장 기록 (`search: true`면 open-world) | 프로젝트와 컴포넌트(1~30개)를 검증·저장하고 컴포넌트별 검색 계획을 반환. 계획의 `queries[]`는 소스별 기본 `query`와 `alternatives[]`(나머지 키워드로 만든 짧은 쿼리)이고, 4단어가 넘는 키워드에는 경고가 붙는다. `search: true`면 trivial이 아닌 모든 컴포넌트의 첫 `rw_search` 라운드를 이 호출에서 실행해(동시 2개) `searches[]`로 돌려준다(예산·증거는 `rw_search`와 같음). ML로 보이는 컴포넌트는 `hf_models` 쿼리도 계획에 포함. 출력의 `concerns_checklist[{ concern, relevance, reason, questions, search_hints }]`는 교차 관심사 5개의 조사 목록(한국어·영어 키워드 규칙으로 `likely`/`consider` 구분)이고, `project.markets`가 있으면 `[KR]` 같은 접두어가 붙은 시장별 질문이 더해진다. 출력 `markets{ codes, source: input/inferred/none }`는 쓰인 대상 시장과 출처 | `project`(`markets?` 포함), `components[]`, `replace`, `search` |
-| `rw_search` | open-world, 원장 기록 | 소스별 어댑터를 병렬 호출해 정규화·중복 병합한 후보를 반환하고 검색 증거를 기록. 소스마다 계획된 쿼리 여러 개를 쓴다: GitHub 같은 `adaptive` 소스는 기본 쿼리 뒤 대안을 결과가 `limit_per_source`의 절반에 못 미칠 때만 하나씩(실패한 쿼리 뒤에는 중단), npm 같은 `eager` 소스는 키워드별 쿼리를 모두 동시에 보내 rank 순으로 섞는다. 같은 ref는 합치고 `matched_via.hits`에 돌려준 쿼리 수를 적어 먼저 보여준다. `query`를 직접 주면 소스마다 그 하나만 보낸다. 예산 경고와 하드 리밋(2배)이 있음 | `component_id`, `query`, `sources`, `limit_per_source`, `force`/`force_reason` |
+| `rw_status` | read-only | 진단용(평소에는 `rw_decompose`의 `preflight`가 같은 핵심 정보를 줌). 버전, 토큰 출처(`env`/`gh_cli`/`none`), 오프라인 여부, 원격 캐시 상태, 레이트리밋, 어댑터 활성 여부, 예산, 캐시 크기, 원장 위치, 교차 관심사 커버리지(`cross_cutting[{ concern, checked, evidence_count, markets? }]`, `markets`는 대상 시장이 있을 때 `legal_privacy`의 시장별 현황). `.recyclewheel`/`ledger.jsonl`이 링크이면 `ledger_exists:false`와 경고. 결정이 1건 이상인데 확인하지 않은 관심사가 있으면 `cross-cutting concern not checked: <concern>` 경고 | `project_root` |
+| `rw_decompose` | 원장 기록 (`search: true`면 open-world) | 프로젝트와 컴포넌트(1~30개)를 검증·저장하고 컴포넌트별 검색 계획을 반환. 계획의 `queries[]`는 소스별 기본 `query`와 `alternatives[]`(나머지 키워드로 만든 짧은 쿼리)이고, 4단어가 넘는 키워드에는 경고가 붙는다. `search: true`면 trivial이 아닌 모든 컴포넌트의 첫 `rw_search` 라운드를 이 호출에서 실행해(동시 2개) `searches[]`로 돌려준다(예산·증거는 `rw_search`와 같음). 출력 `preflight{ github_auth, offline, sources, ledger_exists, warnings }`는 `rw_status`의 핵심 정보다. ML로 보이는 컴포넌트는 `hf_models` 쿼리도 계획에 포함. 출력의 `concerns_checklist[{ concern, relevance, reason, questions, search_hints }]`는 교차 관심사 5개의 조사 목록(한국어·영어 키워드 규칙으로 `likely`/`consider` 구분)이고, `project.markets`가 있으면 `[KR]` 같은 접두어가 붙은 시장별 질문이 더해진다. 출력 `markets{ codes, source: input/inferred/none }`는 쓰인 대상 시장과 출처 | `project`(`markets?` 포함), `components[]`, `replace`, `search` |
+| `rw_search` | open-world, 원장 기록 | 소스별 어댑터를 병렬 호출해 정규화·중복 병합한 후보를 반환하고 검색 증거를 기록. 소스마다 계획된 쿼리 여러 개를 쓴다: GitHub 같은 `adaptive` 소스는 기본 쿼리 뒤 대안을 결과가 `limit_per_source`의 절반에 못 미칠 때만 하나씩(실패한 쿼리 뒤에는 중단), npm 같은 `eager` 소스는 키워드별 쿼리를 모두 동시에 보내 rank 순으로 섞는다. 같은 ref는 합치고 `matched_via.hits`에 돌려준 쿼리 수를 적어 먼저 보여준다. 다른 소스의 같은 프로젝트는 한 행으로 병합되며, 컴포넌트(또는 프로젝트) 생태계의 레지스트리 패키지가 대표 ref가 된다(`npm:x (+github:o/x)`; 설치·고정하는 것과 그 라이선스가 패키지이기 때문). 상위 5개(`preview: true` 기본)에는 deps.dev와 레지스트리만으로 계산한 `preview{ base_score(0~80, fit 제외), license_verdict, license_spdx, flags }`가 붙는다(GitHub API를 쓰지 않고 원장에 기록되지 않음). `query`를 직접 주면 소스마다 그 하나만 보낸다. 예산 경고와 하드 리밋(2배)이 있음 | `component_id`, `query`, `sources`, `limit_per_source`, `force`/`force_reason` |
 | `rw_evaluate` | open-world, 원장 기록 | 후보(1~5개)를 보강 조회해 점수, 라이선스 판정, `hint`(adopt/extend/reference/build)를 계산. `hf:` 후보는 모델 카드 라이선스를, `saas:` 후보는 `saas` 블록으로 SaaS 점수(성숙도·약관·종속성·SDK·적합도 각 20점)를 계산 | `component_id`, `candidates[{ref, fit, fit_reason, weights_ref?, weights_exempt_reason?, service_ref?, no_service_reason?, saas?}]`, `project_license`, `distribution`, `deep` |
-| `rw_record_evidence` | 원장 기록 | 에이전트의 웹/코드 검색 결과를 증거로 기록(0건도 허용). `concern`을 주면 교차 관심사 조사로 기록하며(`market`을 더하면 대상 시장별 조사) 이때는 `component_id`가 선택 사항이고, 컴포넌트 검색 예산과 build 2소스 규칙에는 포함되지 않음(관심사별 웹 쿼리 `RECYCLEWHEEL_BUDGET_WEB`회, `legal_privacy`는 대상 시장 수를 곱한 만큼, 초과 시 경고만) | `component_id`, `concern`(`cost`/`distribution_policy`/`legal_privacy`/`operations`/`security`), `market`(`concern`과 함께만), `kind`(`web`/`code_search`/`manual`), `results[]`, `summary` |
-| `rw_decide` | 원장 기록 | 검증 규칙을 적용해 결정을 기록하고 `decision_id`와 경고를 반환. `ref`/`alternatives`에 `hf:`/`saas:` ref 허용. 가중치 라이선스가 `custom_model_license`/incompatible이거나 SaaS 약관이 미확인(`saas_terms_unverified`)이거나 근거가 원장에 없거나(`saas_evidence_missing`) 벤더 도메인 밖의 페이지뿐이면(`saas_terms_secondhand`) `adopt`/`extend`를 거부(`decided_by: "user"`이면 경고로 완화) | `component_id`, `decision`, `ref`, `rationale`, `build_reason`, `alternatives`, `attribution`, `override` |
+| `rw_record_evidence` | 원장 기록 | 에이전트의 웹/코드 검색 결과를 증거로 기록(0건도 허용). `entries[]`로 여러 건(예: 관심사 5개)을 한 번에 기록하며 항목별로 `evidence_id` 또는 `error`를 돌려준다. `concern`을 주면 교차 관심사 조사로 기록하며(`market`을 더하면 대상 시장별 조사) 이때는 `component_id`가 선택 사항이고, 컴포넌트 검색 예산과 build 2소스 규칙에는 포함되지 않음(관심사별 웹 쿼리 `RECYCLEWHEEL_BUDGET_WEB`회, `legal_privacy`는 대상 시장 수를 곱한 만큼, 초과 시 경고만) | `component_id`, `concern`(`cost`/`distribution_policy`/`legal_privacy`/`operations`/`security`), `market`(`concern`과 함께만), `kind`(`web`/`code_search`/`manual`), `results[]`, `summary` |
+| `rw_decide` | 원장 기록 | 검증 규칙을 적용해 결정을 기록하고 `decision_id`와 경고를 반환. `decisions[]`로 여러 컴포넌트를 한 번에 기록하며 항목별로 기록 또는 거부(`results[].error`)를 돌려주고, 교차 관심사 경고는 한 번만 낸다. `ref`/`alternatives`에 `hf:`/`saas:` ref 허용. 가중치 라이선스가 `custom_model_license`/incompatible이거나 SaaS 약관이 미확인(`saas_terms_unverified`)이거나 근거가 원장에 없거나(`saas_evidence_missing`) 벤더 도메인 밖의 페이지뿐이면(`saas_terms_secondhand`) `adopt`/`extend`를 거부(`decided_by: "user"`이면 경고로 완화) | `component_id`, `decision`, `ref`, `rationale`, `build_reason`, `alternatives`, `attribution`, `override` |
 | `rw_ledger` | 조회/내보내기 | 원장 조회 또는 `markdown`/`json`/`notices` 내보내기. `write_to`는 프로젝트 루트 안의 보이는 `.md`/`.json` 경로만 허용하고, 이미 있는 파일은 내보내기 마커가 있을 때만 덮어씀(아래 "원장 내보내기 쓰기 규칙"). `write_to` 없이 호출하면 `markdown`/`notices`/`json` 모두 텍스트 content 전체를 `<untrusted_third_party_data>`로 감쌈. 출력에 `cross_cutting` 커버리지가 들어가며(컴포넌트로 한정하면 생략) Markdown 보고서에는 "Services (SaaS)"(벤더 도메인과 항목별 약관 출처)와 "Cross-cutting checks"(`legal_privacy`는 시장별) 절이 생김. NOTICES 초안에서 `saas:` 결정은 제외 | `action`(`get`/`export`), `format`, `component_id`, `write_to` |
 | `rw_cache` | 로컬 캐시 | `stats` / `lookup`(메타데이터만, 본문 없음) / `purge`(`confirm: true` 필요, destructive). 원격 캐시에는 영향 없음 | `action`, `url`, `source`, `older_than_days`(정수), `confirm` |
+
+도구 스키마(설명 + 입력 스키마)는 모델 턴마다 전송되므로 짧게 유지합니다(현재 8개 도구 합계 약 23k자, 약 5.8k 토큰). 자세한 규칙은 스킬의 `reference/` 문서에 있습니다.
 | prompt `reuse_first_workflow` | - | 스킬 본문(frontmatter 제외)을 그대로 반환 | `task` |
 
 검색 소스(`rw_search`의 `sources`): `github_repo`, `github_code`, `npm`, `pypi`, `mcp_registry`, `hf_models`(모델 가중치). 평가 보강에는 deps.dev도 쓰입니다.

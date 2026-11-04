@@ -97,6 +97,45 @@ describe('rw_record_evidence', () => {
   });
 });
 
+describe('rw_record_evidence entries[] (several records in one call)', () => {
+  it('records one entry per cross-cutting concern and a component entry, with per-entry outcomes', async () => {
+    h = await createHarness();
+    await seedComponents(h, [component('Markdown')]);
+    const r = await h.call('rw_record_evidence', {
+      entries: [
+        { concern: 'cost', kind: 'web', query: 'pricing', results: [{ url: 'https://example.com/pricing', note: 'free tier' }], summary: 'Free tier covers the expected volume.' },
+        { concern: 'security', kind: 'manual', results: [], summary: 'Not applicable: no network input is processed.' },
+        { concern: 'legal_privacy', market: 'KR', kind: 'web', results: [], summary: 'Korean privacy law: nothing personal is stored.' },
+        { component_id: 'nope', kind: 'manual', results: [], summary: 'This entry names an unknown component.' },
+        { component_id: 'markdown', kind: 'web', query: 'markdown parser comparison', results: [{ url: 'https://example.com/a', ref: 'npm:marked' }], summary: 'marked is the common choice.' },
+      ],
+    });
+    expect(r.isError, r.text).toBe(false);
+    const out = EvidenceOutputSchema.parse(r.structured);
+    expect(out.evidence_ids).toHaveLength(4);
+    expect(out.evidence_id).toBeUndefined();
+    expect(out.results.map((x) => [x.index, x.evidence_id !== undefined])).toEqual([[0, true], [1, true], [2, true], [3, false], [4, true]]);
+    expect(out.results[3]!.error).toContain('unknown component_id');
+    const ev = h.state().evidence;
+    expect(ev.map((e) => e.concern ?? e.component_id)).toEqual(['cost', 'security', 'legal_privacy', 'markdown']);
+    expect(ev[2]!.market).toBe('KR');
+    expect(ev[3]!.result_refs).toEqual(['npm:marked']);
+    expect(r.text).toContain('4 of 5 record(s) recorded');
+    expect(r.text).toContain('entries[3]');
+  });
+
+  it('rejects an entry with market but no concern, mixing forms, and a batch where nothing can be recorded', async () => {
+    h = await createHarness();
+    await seedComponents(h, [component('Markdown')]);
+    expect((await h.call('rw_record_evidence', { entries: [{ market: 'KR', kind: 'manual', results: [], summary: 'market without concern' }] })).isError).toBe(true);
+    expect((await h.call('rw_record_evidence', { kind: 'manual', entries: [{ concern: 'cost', kind: 'manual', results: [], summary: 'mixed forms are refused' }] })).isError).toBe(true);
+    const none = await h.call('rw_record_evidence', { entries: [{ component_id: 'nope', kind: 'manual', results: [], summary: 'unknown component only' }] });
+    expect(none.isError).toBe(true);
+    expect(none.text).toContain('nothing was recorded');
+    expect(h.state().evidence).toEqual([]);
+  });
+});
+
 describe('rw_record_evidence untrusted third-party data fence', () => {
   const OPEN = '<untrusted_third_party_data>';
   const CLOSE = '</untrusted_third_party_data>';
