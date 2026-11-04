@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { CandidateSchema } from '../../../src/types.js';
-import { createNpmAdapter, createNpmEnricher, encodeNpmName } from '../../../src/adapters/npm.js';
+import { NPM_SEARCH_TEXT_MAX, clampNpmSearchText, createNpmAdapter, createNpmEnricher, encodeNpmName } from '../../../src/adapters/npm.js';
 import { FakeHttpClient, failure, notFound, ok } from '../../helpers/fake-http.js';
 
 function fixture<T = Record<string, any>>(name: string): T {
@@ -68,6 +68,26 @@ describe('npm search adapter', () => {
     const http = new FakeHttpClient().set(/registry\.npmjs\.org\/-\/v1\/search/, ok({ objects: [] }));
     await createNpmAdapter({ http }).search({ query: 'a&b #c', limit: 9999 });
     expect(http.urls[0]).toBe('https://registry.npmjs.org/-/v1/search?text=a%26b%20%23c&size=250');
+  });
+
+  it('cuts a query longer than 64 characters at a word boundary and says so (the registry returns 400 otherwise)', async () => {
+    const http = new FakeHttpClient().set(/registry\.npmjs\.org\/-\/v1\/search/, ok({ objects: [] }));
+    const long = 'react native audio player track player background audio lock screen controls hls streaming';
+    const { meta } = await createNpmAdapter({ http }).search({ query: long, limit: 8 });
+    const sent = new URL(http.urls[0]!).searchParams.get('text')!;
+    expect(sent).toBe('react native audio player track player background audio lock');
+    expect(sent.length).toBeLessThanOrEqual(NPM_SEARCH_TEXT_MAX);
+    expect(meta.status).toBe('ok');
+    expect(meta.message).toContain('cut to');
+    expect(clampNpmSearchText('x'.repeat(100))).toHaveLength(64);
+    expect(clampNpmSearchText('short query')).toBe('short query');
+  });
+
+  it('skips a one-character query instead of asking the registry', async () => {
+    const http = new FakeHttpClient();
+    const { meta } = await createNpmAdapter({ http }).search({ query: 'a', limit: 8 });
+    expect(meta.status).toBe('skipped');
+    expect(http.calls).toHaveLength(0);
   });
 
   it('marks cache-served results as cached', async () => {

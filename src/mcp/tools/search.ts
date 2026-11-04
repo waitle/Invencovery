@@ -13,8 +13,8 @@ import { z } from 'zod';
 import { redactGithubToken } from '../../auth/github-token.js';
 import { checkSearchBudget, hardLimit } from '../../core/budget.js';
 import type { SearchBudgetReport } from '../../core/budget.js';
-import { planComponent } from '../../core/decompose.js';
-import { mergeSearchResults } from '../../core/dedupe.js';
+import { planComponent, queryMode } from '../../core/decompose.js';
+import { mergeSearchResults, refKey } from '../../core/dedupe.js';
 import { findComponent } from '../../core/ledger.js';
 import { clampInput, codeSpan, cut, oneLine, softLine, stripControlChars, wrapUntrusted } from '../../core/sanitize.js';
 import { CandidateSchema, EcosystemSchema, SourceMetaSchema, SourceSchema, newId } from '../../types.js';
@@ -39,6 +39,14 @@ const DEFAULT_LIMIT_PER_SOURCE = 8;
 const DEFAULT_PUSHED_WITHIN_DAYS = 730;
 const MAX_TABLE_ROWS = 15;
 const MAX_QUERY_LABEL_CHARS = 500;
+/**
+ * A source's results are "thin" below `ceil(limit / THIN_RESULTS_DIVISOR)` unique
+ * candidates; only then is the next planned query alternative run (PLAN §7.3).
+ * Keeps GitHub's unauthenticated 10 searches/minute for the components that need them.
+ */
+export const THIN_RESULTS_DIVISOR = 2;
+/** An `eager` source keeps up to `limit x this` merged candidates before the cross-source dedupe and the overall cap. */
+export const EAGER_SOURCE_CAP_FACTOR = 2;
 
 /** A source that produced a usable response (possibly with zero hits). */
 const ANSWERED: ReadonlySet<SourceMeta['status']> = new Set(['ok', 'cached', 'partial']);
@@ -128,7 +136,8 @@ function cell(text: string, max = 300): string {
 
 interface Target {
   source: Source;
-  query: string;
+  /** Queries to try in order: the primary first, then the planned alternatives (run only while results are thin). */
+  queries: string[];
   nameHints?: string[];
 }
 
@@ -137,12 +146,15 @@ interface TargetOutcome {
   candidates: Candidate[];
   /** True when an adapter was actually invoked. */
   searched: boolean;
+  /** Queries that were actually sent, in order. */
+  ran: string[];
 }
 
 /**
- * Decides which (source, query) pairs to run. With `query`, every selected
- * source gets that query; otherwise each source uses its planned query, or the
- * component keywords for a source the plan does not cover (e.g. github_code).
+ * Decides which (source, queries) pairs to run. With `query`, every selected
+ * source gets that single query; otherwise each source uses its planned query
+ * and alternatives, or the component keywords for a source the plan does not
+ * cover (e.g. github_code).
  */
 function resolveTargets(
   input: SearchToolInput,
@@ -161,7 +173,7 @@ function resolveTargets(
     return {
       targets: sources.map((source) => ({
         source,
-        query,
+        queries: [query],
         ...(input.name_hints !== undefined ? { nameHints: input.name_hints } : {}),
       })),
     };
@@ -187,33 +199,32 @@ function resolveTargets(
     targets: sources.map((source) => {
       const p = planned.get(source);
       const nameHints = input.name_hints ?? p?.params?.nameHints;
-      return { source, query: p?.query ?? keywordQuery, ...(nameHints !== undefined ? { nameHints } : {}) };
+      const queries = p !== undefined ? [p.query, ...(p.alternatives ?? [])] : [keywordQuery];
+      return { source, queries, ...(nameHints !== undefined ? { nameHints } : {}) };
     }),
   };
 }
 
 function skipped(source: Source, query: string, message: string): TargetOutcome {
-  return { meta: { source, status: 'skipped', count: 0, query, message }, candidates: [], searched: false };
+  return { meta: { source, status: 'skipped', count: 0, query, message }, candidates: [], searched: false, ran: [] };
 }
 
-async function runTarget(
+/** Unique candidates below which the next query alternative of a source is worth running. */
+export function thinThreshold(limit: number): number {
+  return Math.ceil(limit / THIN_RESULTS_DIVISOR);
+}
+
+/** One adapter call: valid candidates (at most `limit`) and the source meta, never throws. */
+async function runQuery(
   ctx: AppContext,
   target: Target,
+  query: string,
   input: SearchToolInput,
   component: Component | undefined,
   limit: number,
-): Promise<TargetOutcome> {
-  const { source, query } = target;
-  if (!ctx.config.sources.includes(source)) {
-    return skipped(
-      source,
-      query,
-      `Source ${source} is disabled (RECYCLEWHEEL_SOURCES lists: ${ctx.config.sources.join(', ') || 'none'}).`,
-    );
-  }
-  const adapter = ctx.adapters[source];
-  if (adapter === undefined) return skipped(source, query, `No adapter is registered for ${source}.`);
-
+): Promise<{ meta: SourceMeta; candidates: Candidate[] }> {
+  const { source } = target;
+  const adapter = ctx.adapters[source]!;
   const ecosystem = input.ecosystem ?? component?.ecosystem;
   try {
     const result = await adapter.search({
@@ -228,12 +239,12 @@ async function runTarget(
     const offered = result.candidates.slice(0, limit);
     const candidates = offered.filter((c) => CandidateSchema.safeParse(c).success);
     const dropped = offered.length - candidates.length;
-    const meta: SourceMeta = { ...result.meta, source, count: candidates.length };
+    const meta: SourceMeta = { ...result.meta, source, count: candidates.length, query };
     if (dropped > 0) {
       meta.message = `${meta.message ? `${meta.message} ` : ''}${dropped} malformed candidate(s) dropped.`;
       if (meta.status === 'ok' || meta.status === 'cached') meta.status = 'partial';
     }
-    return { meta, candidates, searched: true };
+    return { meta, candidates };
   } catch (err) {
     return {
       meta: {
@@ -244,9 +255,142 @@ async function runTarget(
         message: `${source} search failed unexpectedly: ${safeErrorMessage(err)}. ${MANUAL_FALLBACK}`,
       },
       candidates: [],
-      searched: true,
     };
   }
+}
+
+/**
+ * Combines the metas of the queries run for one source. Any answering query
+ * makes the source answered: `ok` when every run was live and clean, `cached`
+ * when every run came from a cache, `partial` otherwise (a failed or partial
+ * run among answered ones). With no answering run, the first failure stands.
+ */
+function combineMetas(source: Source, metas: readonly SourceMeta[], count: number, extraNotes: readonly string[]): SourceMeta {
+  const first = metas[0]!;
+  const answered = metas.filter((m) => ANSWERED.has(m.status));
+  const query = metas.map((m) => m.query ?? '').filter((q) => q !== '').join(' | ');
+  const messages = [...new Set([...metas.flatMap((m) => (m.message ? [m.message] : [])), ...extraNotes])];
+  let status: SourceMeta['status'];
+  if (answered.length === 0) status = first.status;
+  else if (answered.length < metas.length || answered.some((m) => m.status === 'partial')) status = 'partial';
+  else if (answered.every((m) => m.status === 'cached')) status = 'cached';
+  else status = 'ok';
+  const rate = metas.find((m) => m.rate_limit !== undefined)?.rate_limit;
+  return {
+    source,
+    status,
+    count,
+    ...(query !== '' ? { query } : {}),
+    ...(rate !== undefined ? { rate_limit: rate } : {}),
+    ...(messages.length > 0 ? { message: messages.join(' ') } : {}),
+  };
+}
+
+/** Distinct lowercase words (2+ characters) of a component's keywords. */
+function keywordTokens(component: Component | undefined): string[] {
+  if (component === undefined) return [];
+  return [...new Set(component.keywords.flatMap((k) => k.toLowerCase().split(/[^a-z0-9]+/)).filter((w) => w.length >= 2))];
+}
+
+/**
+ * How many keyword words the candidate's name and description mention
+ * (substring match, so "stations" counts for "station"). A tiebreaker among
+ * candidates that the same number of queries returned: a package that matches
+ * only the one word several keywords share (e.g. "radio" in a radio-button
+ * widget) sorts after one that matches the others too.
+ */
+export function keywordOverlap(candidate: Pick<Candidate, 'name' | 'description'>, tokens: readonly string[]): number {
+  const text = `${candidate.name} ${candidate.description ?? ''}`.toLowerCase();
+  return tokens.filter((t) => text.includes(t)).length;
+}
+
+/** Round-robin over several ranked lists: every list's first hit, then every list's second hit, and so on. */
+function roundRobin(lists: readonly (readonly Candidate[])[]): Candidate[] {
+  const out: Candidate[] = [];
+  const longest = Math.max(0, ...lists.map((l) => l.length));
+  for (let r = 0; r < longest; r++) for (const list of lists) if (list[r] !== undefined) out.push(list[r]!);
+  return out;
+}
+
+/**
+ * Runs the planned query variants of one source and merges their candidates by
+ * ref (`matched_via.hits` counts the queries that returned a candidate, ranks are
+ * reassigned 1..n; at most `limit` candidates for adaptive sources, `limit x
+ * EAGER_SOURCE_CAP_FACTOR` for eager ones):
+ * - `adaptive` sources run the primary, then one alternative at a time while the
+ *   unique candidates so far stay below `thinThreshold(limit)`; a run that did
+ *   not answer (rate limit, offline, error) stops the alternatives, because the
+ *   next query would fail the same way and spend the same rate limit;
+ * - `eager` sources run every variant at once and interleave the results by rank.
+ */
+async function runTarget(
+  ctx: AppContext,
+  target: Target,
+  input: SearchToolInput,
+  component: Component | undefined,
+  limit: number,
+): Promise<TargetOutcome> {
+  const { source } = target;
+  const label = target.queries[0] ?? '';
+  if (!ctx.config.sources.includes(source)) {
+    return skipped(
+      source,
+      label,
+      `Source ${source} is disabled (RECYCLEWHEEL_SOURCES lists: ${ctx.config.sources.join(', ') || 'none'}).`,
+    );
+  }
+  if (ctx.adapters[source] === undefined) return skipped(source, label, `No adapter is registered for ${source}.`);
+
+  const metas: SourceMeta[] = [];
+  const ran: string[] = [];
+  const merged: Candidate[] = [];
+  const byKey = new Map<string, Candidate>();
+  const absorb = (candidates: readonly Candidate[], cap: number): void => {
+    for (const c of candidates) {
+      const key = refKey(c.ref);
+      const seen = byKey.get(key);
+      if (seen !== undefined) {
+        seen.matched_via = { ...seen.matched_via, hits: (seen.matched_via.hits ?? 1) + 1 };
+        continue;
+      }
+      if (merged.length >= cap) continue;
+      const copy: Candidate = { ...c, matched_via: { query: c.matched_via.query, rank: merged.length + 1 } };
+      byKey.set(key, copy);
+      merged.push(copy);
+    }
+  };
+
+  const mode = queryMode(source);
+  if (mode === 'eager') {
+    const runs = await Promise.all(target.queries.map((query) => runQuery(ctx, target, query, input, component, limit)));
+    ran.push(...target.queries);
+    metas.push(...runs.map((r) => r.meta));
+    // Several keyword queries return more than one query would: keep up to twice the limit so that the cross-source
+    // dedupe still sees a package whose GitHub repository another source ranked high (the merged row inherits that
+    // rank; the overall cap of rw_search trims the rest). Candidates several keywords returned come first.
+    absorb(roundRobin(runs.map((r) => r.candidates)), limit * EAGER_SOURCE_CAP_FACTOR);
+    const tokens = keywordTokens(component);
+    const overlap = new Map(merged.map((c) => [c, keywordOverlap(c, tokens)]));
+    merged.sort((a, b) => (b.matched_via.hits ?? 1) - (a.matched_via.hits ?? 1) || (overlap.get(b) ?? 0) - (overlap.get(a) ?? 0));
+    merged.forEach((c, i) => {
+      c.matched_via = { ...c.matched_via, rank: i + 1 };
+    });
+  } else {
+    const threshold = thinThreshold(limit);
+    for (const [i, query] of target.queries.entries()) {
+      if (i > 0 && merged.length >= threshold) break;
+      const run = await runQuery(ctx, target, query, input, component, limit);
+      ran.push(query);
+      metas.push(run.meta);
+      absorb(run.candidates, limit);
+      if (!ANSWERED.has(run.meta.status)) break;
+    }
+  }
+  const notes =
+    ran.length > 1
+      ? [mode === 'eager' ? `${ran.length} keyword queries run and merged by rank.` : `${ran.length} query variants run (results were thin).`]
+      : [];
+  return { meta: combineMetas(source, metas, merged.length, notes), candidates: merged, searched: true, ran };
 }
 
 function uniqueProvenance(candidates: readonly Candidate[]): Provenance[] {
@@ -255,6 +399,39 @@ function uniqueProvenance(candidates: readonly Candidate[]): Provenance[] {
 
 function formatCount(n: number | undefined): string {
   return n === undefined ? '-' : String(n);
+}
+
+/**
+ * Candidate table inside the untrusted fence (names, licenses and descriptions
+ * come from third parties), or a one-line "none" note. Shared with rw_decompose.
+ */
+export function candidateTableLines(candidates: readonly Candidate[], maxRows = MAX_TABLE_ROWS): string[] {
+  if (candidates.length === 0) return ['No candidates found.'];
+  const table: string[] = [
+    '| # | Candidate | Source | Stars | Weekly downloads | License | Last activity | Description |',
+    '|---|---|---|---|---|---|---|---|',
+  ];
+  candidates.slice(0, maxRows).forEach((c, i) => {
+    const alias = c.also_known_as && c.also_known_as.length > 0 ? ` (+${c.also_known_as.join(', ')})` : '';
+    const hits = c.matched_via.hits !== undefined && c.matched_via.hits > 1 ? ` [${c.matched_via.hits} hits]` : '';
+    const flags = [c.archived ? 'archived' : '', c.deprecated ? 'deprecated' : ''].filter(Boolean).join(', ');
+    table.push(
+      `| ${i + 1} | \`${cell(c.ref, 1100)}\`${cell(alias, 600)}${hits}${flags ? ` [${flags}]` : ''} | ${c.source} | ${formatCount(c.stars)} | ${formatCount(c.downloads_weekly)} | ${cell(c.license_spdx ?? (c.license_spdx === null ? 'none' : '-'))} | ${c.last_activity?.slice(0, 10) ?? '-'} | ${cell(c.description ?? '')} |`,
+    );
+  });
+  const lines = wrapUntrusted(table);
+  if (candidates.length > maxRows) {
+    lines.push('', `_... and ${candidates.length - maxRows} more candidate(s); see structuredContent._`);
+  }
+  return lines;
+}
+
+/** `- source: status, N result(s) (queries: ...) - message` lines. Shared with rw_decompose. */
+export function perSourceLines(perSource: readonly SourceMeta[]): string[] {
+  return perSource.map((m) => {
+    const queries = m.query ? ` (${m.query.split(' | ').length > 1 ? 'queries' : 'query'}: ${m.query.split(' | ').map((q) => codeSpan(q, 200)).join(', ')})` : '';
+    return `- ${m.source}: ${m.status}, ${m.count} result(s)${queries}${m.message ? ` - ${softLine(m.message, 400)}` : ''}`;
+  });
 }
 
 function summaryText(args: {
@@ -266,33 +443,14 @@ function summaryText(args: {
   const lines: string[] = [];
   // Component names, ids and keyword-derived queries come from the ledger: never raw outside the fence.
   lines.push(`## rw_search${component ? `: ${oneLine(component.name, 100)} (${codeSpan(component.id, 64)})` : ' (unscoped)'}`, '');
-  lines.push(`Evidence ${codeSpan(output.evidence_id)} recorded. Queries: ${targets.map((t) => `${t.source}: ${codeSpan(t.query)}`).join('; ')}`, '');
+  const planned = targets.map((t) => {
+    const extra = t.queries.length > 1 ? ` (+${t.queries.length - 1} alternative${t.queries.length > 2 ? 's' : ''} when thin)` : '';
+    return `${t.source}: ${codeSpan(t.queries[0] ?? '')}${extra}`;
+  });
+  lines.push(`Evidence ${codeSpan(output.evidence_id)} recorded. Planned queries: ${planned.join('; ')}`, '');
+  lines.push(...candidateTableLines(output.candidates));
 
-  if (output.candidates.length > 0) {
-    // Names, licenses and descriptions come from third parties: fence the table.
-    const table: string[] = [
-      '| # | Candidate | Source | Stars | Weekly downloads | License | Last activity | Description |',
-      '|---|---|---|---|---|---|---|---|',
-    ];
-    output.candidates.slice(0, MAX_TABLE_ROWS).forEach((c, i) => {
-      const alias = c.also_known_as && c.also_known_as.length > 0 ? ` (+${c.also_known_as.join(', ')})` : '';
-      const flags = [c.archived ? 'archived' : '', c.deprecated ? 'deprecated' : ''].filter(Boolean).join(', ');
-      table.push(
-        `| ${i + 1} | \`${cell(c.ref, 1100)}\`${cell(alias, 600)}${flags ? ` [${flags}]` : ''} | ${c.source} | ${formatCount(c.stars)} | ${formatCount(c.downloads_weekly)} | ${cell(c.license_spdx ?? (c.license_spdx === null ? 'none' : '-'))} | ${c.last_activity?.slice(0, 10) ?? '-'} | ${cell(c.description ?? '')} |`,
-      );
-    });
-    lines.push(...wrapUntrusted(table));
-    if (output.candidates.length > MAX_TABLE_ROWS) {
-      lines.push('', `_... and ${output.candidates.length - MAX_TABLE_ROWS} more candidate(s); see structuredContent._`);
-    }
-  } else {
-    lines.push('No candidates found.');
-  }
-
-  lines.push('', 'Sources:');
-  for (const m of output.per_source) {
-    lines.push(`- ${m.source}: ${m.status}, ${m.count} result(s)${m.message ? ` - ${softLine(m.message, 400)}` : ''}`);
-  }
+  lines.push('', 'Sources:', ...perSourceLines(output.per_source));
   if (output.degraded && output.fallback_hint) lines.push('', `Degraded: ${output.fallback_hint}`);
   const b = output.budget;
   lines.push('', `Search rounds before this call: ${b.rounds_used}/${b.rounds_limit} (hard limit ${b.hard_limit}).`);
@@ -307,116 +465,138 @@ function summaryText(args: {
 // Handler
 // ---------------------------------------------------------------------------
 
-async function handleSearch(ctx: AppContext, input: SearchToolInput): Promise<CallToolResult> {
-  try {
-    if (input.component_id === undefined && (input.query === undefined || input.query.trim() === '')) {
-      return errorResult(`${TOOL_NAME}: pass component_id (to use its planned queries) and/or query.`);
-    }
+/** Result of `performSearch`: the tool output plus what the text summary needs. */
+export interface PerformedSearch {
+  output: SearchOutput;
+  component: Component | undefined;
+  targets: Target[];
+}
 
-    const ledger = ctx.ledger(input.project_root);
-    const state = ledger.read();
+/**
+ * The whole `rw_search` operation without the MCP result wrapping: resolves the
+ * component and targets, checks the budget, runs the adapters, merges, records
+ * the search evidence and the component status. Returns `{ error }` for the
+ * agent-facing input errors. Shared with `rw_decompose` (`search: true`).
+ */
+export async function performSearch(ctx: AppContext, input: SearchToolInput): Promise<PerformedSearch | { error: string }> {
+  if (input.component_id === undefined && (input.query === undefined || input.query.trim() === '')) {
+    return { error: `${TOOL_NAME}: pass component_id (to use its planned queries) and/or query.` };
+  }
 
-    let component: Component | undefined;
-    if (input.component_id !== undefined) {
-      component = findComponent(state, input.component_id);
-      if (component === undefined) {
-        const known = state.components.slice(0, 10).map((c) => c.id);
-        return errorResult(
-          `${TOOL_NAME}: unknown component_id ${codeSpan(input.component_id, 64)}. ${
-            known.length > 0 ? `Known ids: ${known.map((id) => codeSpan(id, 64)).join(', ')}.` : 'The ledger has no components yet.'
-          } Call rw_decompose first, or fix the id.`,
-        );
-      }
-    }
+  const ledger = ctx.ledger(input.project_root);
+  const state = ledger.read();
 
-    const resolved = resolveTargets(input, component, state.project?.ecosystems ?? [], ctx.config.sources);
-    if ('error' in resolved) return errorResult(resolved.error);
-    const { targets } = resolved;
-
-    let budget: SearchBudgetReport;
-    if (component !== undefined) {
-      const check = checkSearchBudget(state, component.id, ctx.config.budget, {
-        ...(input.force !== undefined ? { force: input.force } : {}),
-        ...(input.force_reason !== undefined ? { force_reason: input.force_reason } : {}),
-      });
-      if (!check.allowed) return errorResult(`${TOOL_NAME}: ${check.error ?? 'search budget exhausted.'}`);
-      budget = check.budget;
-    } else {
-      budget = {
-        rounds_used: 0,
-        rounds_limit: ctx.config.budget.rounds,
-        hard_limit: hardLimit(ctx.config.budget.rounds),
+  let component: Component | undefined;
+  if (input.component_id !== undefined) {
+    component = findComponent(state, input.component_id);
+    if (component === undefined) {
+      const known = state.components.slice(0, 10).map((c) => c.id);
+      return {
+        error: `${TOOL_NAME}: unknown component_id ${codeSpan(input.component_id, 64)}. ${
+          known.length > 0 ? `Known ids: ${known.map((id) => codeSpan(id, 64)).join(', ')}.` : 'The ledger has no components yet.'
+        } Call rw_decompose first, or fix the id.`,
       };
     }
+  }
 
-    const limit = input.limit_per_source ?? DEFAULT_LIMIT_PER_SOURCE;
-    const outcomes = await Promise.all(targets.map((t) => runTarget(ctx, t, input, component, limit)));
+  const resolved = resolveTargets(input, component, state.project?.ecosystems ?? [], ctx.config.sources);
+  if ('error' in resolved) return { error: resolved.error };
+  const { targets } = resolved;
 
-    const searchedCount = outcomes.filter((o) => o.searched).length;
-    const candidates = mergeSearchResults(
-      outcomes.map((o) => o.candidates),
-      limit * Math.max(1, searchedCount),
-    );
-    const perSource = outcomes.map((o) => o.meta);
-    const answered = [...new Set(perSource.filter((m) => ANSWERED.has(m.status)).map((m) => m.source))];
-    const degraded = answered.length === 0;
-
-    let fallbackHint: string | undefined;
-    if (degraded) {
-      // The query sits inside code spans of the hint: one line, no quotes, backticks or angle brackets.
-      const first = stripControlChars(targets[0]?.query ?? '')
-        .replace(/[\s"`<>]+/g, ' ')
-        .trim()
-        .slice(0, MAX_QUERY_LABEL_CHARS);
-      const parts = [MANUAL_FALLBACK.replaceAll('<query>', first)];
-      if (perSource.some((m) => m.status === 'unauthenticated')) parts.push(CODE_SEARCH_FALLBACK);
-      fallbackHint = parts.join(' ');
-    }
-
-    const now = ctx.now();
-    const queryLabel = (
-      new Set(targets.map((t) => t.query)).size === 1
-        ? (targets[0]?.query ?? '')
-        : targets.map((t) => `${t.source}: ${t.query}`).join(' | ')
-    ).slice(0, MAX_QUERY_LABEL_CHARS);
-    const notAnswered = perSource.filter((m) => !ANSWERED.has(m.status));
-    const summary =
-      `Searched ${answered.join(', ') || 'no source'}: ${candidates.length} unique candidate(s).` +
-      (notAnswered.length > 0 ? ` Not answered: ${notAnswered.map((m) => `${m.source} (${m.status})`).join(', ')}.` : '');
-    const provenance = uniqueProvenance(candidates);
-    const evidence: Evidence = {
-      id: newId('ev'),
-      component_id: component?.id ?? UNSCOPED_COMPONENT_ID,
-      kind: 'search',
-      at: now.toISOString(),
-      query: queryLabel,
-      sources: answered,
-      tool: TOOL_NAME,
-      result_refs: candidates.map((c) => c.ref),
-      summary,
-      ...(provenance.length > 0 ? { provenance } : {}),
+  let budget: SearchBudgetReport;
+  if (component !== undefined) {
+    const check = checkSearchBudget(state, component.id, ctx.config.budget, {
+      ...(input.force !== undefined ? { force: input.force } : {}),
+      ...(input.force_reason !== undefined ? { force_reason: input.force_reason } : {}),
+    });
+    if (!check.allowed) return { error: `${TOOL_NAME}: ${check.error ?? 'search budget exhausted.'}` };
+    budget = check.budget;
+  } else {
+    budget = {
+      rounds_used: 0,
+      rounds_limit: ctx.config.budget.rounds,
+      hard_limit: hardLimit(ctx.config.budget.rounds),
     };
-    ledger.append({ v: 1, type: 'evidence.add', at: evidence.at, evidence });
-    if (component !== undefined && component.status === 'pending') {
-      ledger.append({
-        v: 1,
-        type: 'component.upsert',
-        at: evidence.at,
-        component: { ...component, status: 'searching' },
-      });
-    }
+  }
 
-    const output: SearchOutput = {
-      evidence_id: evidence.id,
-      candidates,
-      per_source: perSource,
-      degraded,
-      ...(fallbackHint !== undefined ? { fallback_hint: fallbackHint } : {}),
-      budget,
-    };
+  const limit = input.limit_per_source ?? DEFAULT_LIMIT_PER_SOURCE;
+  const outcomes = await Promise.all(targets.map((t) => runTarget(ctx, t, input, component, limit)));
+
+  const searchedCount = outcomes.filter((o) => o.searched).length;
+  const candidates = mergeSearchResults(
+    outcomes.map((o) => o.candidates),
+    limit * Math.max(1, searchedCount),
+  );
+  const perSource = outcomes.map((o) => o.meta);
+  const answered = [...new Set(perSource.filter((m) => ANSWERED.has(m.status)).map((m) => m.source))];
+  const degraded = answered.length === 0;
+
+  let fallbackHint: string | undefined;
+  if (degraded) {
+    // The query sits inside code spans of the hint: one line, no quotes, backticks or angle brackets.
+    const first = stripControlChars(targets[0]?.queries[0] ?? '')
+      .replace(/[\s"`<>]+/g, ' ')
+      .trim()
+      .slice(0, MAX_QUERY_LABEL_CHARS);
+    const parts = [MANUAL_FALLBACK.replaceAll('<query>', first)];
+    if (perSource.some((m) => m.status === 'unauthenticated')) parts.push(CODE_SEARCH_FALLBACK);
+    fallbackHint = parts.join(' ');
+  }
+
+  const now = ctx.now();
+  // The evidence records the queries that were actually sent (planned alternatives only when they ran).
+  const ranBySource = outcomes.map((o, i) => ({ source: targets[i]!.source, ran: o.ran.length > 0 ? o.ran : [targets[i]!.queries[0] ?? ''] }));
+  const distinctQueries = new Set(ranBySource.flatMap((r) => r.ran));
+  const queryLabel = (
+    distinctQueries.size === 1
+      ? [...distinctQueries][0] ?? ''
+      : ranBySource.map((r) => `${r.source}: ${r.ran.join(' | ')}`).join(' | ')
+  ).slice(0, MAX_QUERY_LABEL_CHARS);
+  const notAnswered = perSource.filter((m) => !ANSWERED.has(m.status));
+  const summary =
+    `Searched ${answered.join(', ') || 'no source'}: ${candidates.length} unique candidate(s).` +
+    (notAnswered.length > 0 ? ` Not answered: ${notAnswered.map((m) => `${m.source} (${m.status})`).join(', ')}.` : '');
+  const provenance = uniqueProvenance(candidates);
+  const evidence: Evidence = {
+    id: newId('ev'),
+    component_id: component?.id ?? UNSCOPED_COMPONENT_ID,
+    kind: 'search',
+    at: now.toISOString(),
+    query: queryLabel,
+    sources: answered,
+    tool: TOOL_NAME,
+    result_refs: candidates.map((c) => c.ref),
+    summary,
+    ...(provenance.length > 0 ? { provenance } : {}),
+  };
+  ledger.append({ v: 1, type: 'evidence.add', at: evidence.at, evidence });
+  if (component !== undefined && component.status === 'pending') {
+    ledger.append({
+      v: 1,
+      type: 'component.upsert',
+      at: evidence.at,
+      component: { ...component, status: 'searching' },
+    });
+  }
+
+  const output: SearchOutput = {
+    evidence_id: evidence.id,
+    candidates,
+    per_source: perSource,
+    degraded,
+    ...(fallbackHint !== undefined ? { fallback_hint: fallbackHint } : {}),
+    budget,
+  };
+  return { output, component, targets };
+}
+
+async function handleSearch(ctx: AppContext, input: SearchToolInput): Promise<CallToolResult> {
+  try {
+    const done = await performSearch(ctx, input);
+    if ('error' in done) return errorResult(done.error);
     return {
-      content: [{ type: 'text', text: summaryText({ output, component, targets }) }],
-      structuredContent: output,
+      content: [{ type: 'text', text: summaryText(done) }],
+      structuredContent: done.output,
     };
   } catch (err) {
     return errorResult(`${TOOL_NAME} failed: ${safeErrorMessage(err)}`);

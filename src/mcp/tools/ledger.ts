@@ -282,7 +282,9 @@ export function resolveWriteTarget(
   const root = path.resolve(projectRoot);
   const target = path.resolve(root, raw);
   const outside = `write_to ${shown} resolves outside the project root (${codeSpan(root, 500)}). Use a path inside the project, e.g. 'docs/REUSE.md'.`;
-  if (!isPathInside(root, target) || target === root) {
+  // A `..` segment by either separator means "leave the directory", whatever the current OS makes of a backslash
+  // (on POSIX `..\x.md` is one odd file name; it is refused as an escape attempt all the same).
+  if (!isPathInside(root, target) || target === root || splitSegments(raw).includes('..')) {
     return { ok: false, error: outside };
   }
   if (!existsSync(root) || !statSync(root).isDirectory()) {

@@ -24,7 +24,52 @@ export const MAX_MARKETS = 10;
 /** PLAN §10.3: a task should stay within this many components. */
 export const RECOMMENDED_COMPONENTS = 10;
 const MAX_NAME_HINTS = 5;
-const MAX_GITHUB_KEYWORDS = 4;
+/**
+ * Query policy per source (PLAN §7.2). Every search backend ANDs or weighs all
+ * terms, so one long query made of every keyword returns one or zero hits (the
+ * npm registry even rejects text over 64 characters). The planner therefore
+ * builds several short variants from the keywords:
+ * - `adaptive` sources (GitHub: 10 unauthenticated searches a minute) get the
+ *   first keywords packed into a primary query and the rest as alternatives that
+ *   `rw_search` runs one by one only while the results so far are thin;
+ * - `eager` sources (npm: no tight rate limit, and its ranking degrades sharply
+ *   when phrases are concatenated) get one query per keyword, all run at once
+ *   and merged by rank, so a package several keywords return ranks first.
+ */
+export const QUERY_BUDGETS = {
+  /** GitHub repository search ANDs every term over name, description and topics. */
+  github_repo: { maxTokens: 4, maxChars: 200, maxVariants: 3, mode: 'adaptive' },
+  /** The npm registry rejects `text` longer than 64 characters (HTTP 400, ERR_TEXT_LENGTH). One keyword per query. */
+  npm: { maxTokens: 6, maxChars: 64, maxKeywords: 1, maxVariants: 5, mode: 'eager' },
+  /** Only libraries.io reads the PyPI query; name probes come from `params.nameHints`, so one query is enough. */
+  pypi: { maxTokens: 6, maxChars: 64, maxVariants: 1, mode: 'adaptive' },
+  /** The registry adapter already retries the individual terms of a query that matched nothing. */
+  mcp_registry: { maxTokens: 6, maxChars: 120, maxVariants: 3, mode: 'adaptive' },
+  hf_models: { maxTokens: 4, maxChars: 100, maxVariants: 3, mode: 'adaptive' },
+} as const satisfies Partial<Record<Source, QueryBudget>>;
+/** A keyword with more words than this is a sentence, not a search term (warning only). */
+export const MAX_KEYWORD_WORDS = 4;
+
+export type QueryMode = 'adaptive' | 'eager';
+
+export interface QueryBudget {
+  /** Distinct words a variant may hold. */
+  maxTokens: number;
+  /** Characters a variant may hold. */
+  maxChars: number;
+  /** Whole keywords a variant may hold (default unlimited within the other budgets). */
+  maxKeywords?: number;
+  /** Primary query plus alternatives (default 3). */
+  maxVariants?: number;
+  /** How `rw_search` runs the variants (default `adaptive`). */
+  mode?: QueryMode;
+}
+
+/** How `rw_search` runs the planned variants of a source: alternatives one by one while thin, or all at once. */
+export function queryMode(source: Source): QueryMode {
+  const budget = (QUERY_BUDGETS as Partial<Record<Source, QueryBudget>>)[source];
+  return budget?.mode ?? 'adaptive';
+}
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 const MARKET_PATTERN = /^[A-Z]{2}$/;
 
@@ -301,6 +346,15 @@ export function validateDecompose(
   if (markets.source === 'none') {
     warnings.push('no target market given or inferable from the project text; legal and store rules differ per country. Set project.markets (e.g. ["KR"] or ["US", "EU"]).');
   }
+  for (const c of normalized) {
+    if (c.trivial === true) continue;
+    const long = c.keywords.filter((k) => wordsOf(k).length > MAX_KEYWORD_WORDS);
+    if (long.length > 0) {
+      warnings.push(
+        `component ${codeSpan(c.id, 64)}: keyword(s) ${long.map((k) => codeSpan(k, 80)).join(', ')} have more than ${MAX_KEYWORD_WORDS} words; search backends match every word, so 1-3 word keywords (a library name, the problem domain, a synonym) find more. The plan truncates them.`,
+      );
+    }
+  }
 
   return {
     errors,
@@ -333,7 +387,13 @@ export function buildDecomposeEvents(
 
 export interface PlannedQuery {
   source: Source;
+  /** Primary query: the first keywords packed into the source's budget. */
   query: string;
+  /**
+   * Further queries built from the keywords the primary could not hold, in
+   * order. `rw_search` runs them one by one while the results so far are thin.
+   */
+  alternatives?: string[];
   params?: { nameHints?: string[] };
 }
 
@@ -384,6 +444,72 @@ export function pypiNameHints(keywords: readonly string[]): string[] {
   return hints.slice(0, MAX_NAME_HINTS);
 }
 
+/** Whitespace-separated words of a keyword. */
+function wordsOf(keyword: string): string[] {
+  return keyword.split(/\s+/).filter((w) => w !== '');
+}
+
+/**
+ * Packs whole keywords, in order, into query variants that respect a source's
+ * token and character budget: a variant takes keywords while its distinct words
+ * stay within `maxTokens` and its length within `maxChars`; the next variant
+ * starts with the first keyword that did not fit. A single keyword longer than
+ * the budget is cut to it. Returns the primary variant first, then the
+ * alternatives, at most `budget.maxVariants` (default 3) in all; an empty list
+ * for no usable keywords.
+ */
+export function queryVariants(keywords: readonly string[], budget: QueryBudget): string[] {
+  const maxVariants = budget.maxVariants ?? 3;
+  const maxKeywords = budget.maxKeywords ?? Number.POSITIVE_INFINITY;
+  const variants: string[] = [];
+  let current: string[] = [];
+  let tokens = new Set<string>();
+  const flush = (): void => {
+    if (current.length > 0) variants.push(current.join(' '));
+    current = [];
+    tokens = new Set();
+  };
+  const fits = (words: readonly string[], text: string): boolean => {
+    const distinct = new Set([...tokens, ...words.map((w) => w.toLowerCase())]);
+    return distinct.size <= budget.maxTokens && text.length <= budget.maxChars;
+  };
+  /** The leading words of a keyword that fit an empty variant (a sentence is cut, never dropped). */
+  const alone = (words: string[]): string[] => {
+    while (words.length > 1 && (new Set(words.map((w) => w.toLowerCase())).size > budget.maxTokens || words.join(' ').length > budget.maxChars)) {
+      words = words.slice(0, -1);
+    }
+    return words;
+  };
+
+  for (const raw of keywords) {
+    if (variants.length >= maxVariants) break;
+    let words = wordsOf(raw);
+    if (words.length === 0) continue;
+    if (current.length > 0 && (current.length >= maxKeywords || !fits(words, `${current.join(' ')} ${words.join(' ')}`))) {
+      flush();
+      if (variants.length >= maxVariants) break;
+    }
+    words = alone(words);
+    const keyword = words.join(' ');
+    if (keyword.length > budget.maxChars) continue;
+    current.push(keyword);
+    for (const w of words) tokens.add(w.toLowerCase());
+  }
+  if (variants.length < maxVariants) flush();
+  return variants;
+}
+
+function planned(source: Source, variants: readonly string[], params?: PlannedQuery['params']): PlannedQuery | undefined {
+  const [query, ...alternatives] = variants;
+  if (query === undefined) return undefined;
+  return {
+    source,
+    query,
+    ...(alternatives.length > 0 ? { alternatives } : {}),
+    ...(params !== undefined ? { params } : {}),
+  };
+}
+
 function mentionsMcp(component: Component, ecosystems: readonly string[]): boolean {
   if (component.kind === 'tool') return true;
   if (ecosystems.includes('mcp')) return true;
@@ -404,26 +530,30 @@ export function planComponent(
   const keywords = cleanKeywords(component.keywords);
   const queries: PlannedQuery[] = [];
 
+  const push = (q: PlannedQuery | undefined): void => {
+    if (q !== undefined) queries.push(q);
+  };
   if (keywords.length > 0) {
     const language = githubLanguage(ecosystems);
-    const github = [keywords.slice(0, MAX_GITHUB_KEYWORDS).join(' '), 'archived:false', 'fork:false'];
-    if (language !== undefined) github.push(`language:${language}`);
-    queries.push({ source: 'github_repo', query: github.join(' ') });
+    const qualifiers = ['archived:false', 'fork:false', ...(language !== undefined ? [`language:${language}`] : [])];
+    push(
+      planned(
+        'github_repo',
+        queryVariants(keywords, QUERY_BUDGETS.github_repo).map((v) => [v, ...qualifiers].join(' ')),
+      ),
+    );
 
-    if (ecosystems.includes('npm')) queries.push({ source: 'npm', query: keywords.join(' ') });
+    if (ecosystems.includes('npm')) push(planned('npm', queryVariants(keywords, QUERY_BUDGETS.npm)));
     if (ecosystems.includes('pypi')) {
-      queries.push({
-        source: 'pypi',
-        query: keywords.join(' '),
-        params: { nameHints: pypiNameHints(keywords) },
-      });
+      // Discovery probes `nameHints`, which already cover every keyword: one query is enough.
+      push(planned('pypi', queryVariants(keywords, QUERY_BUDGETS.pypi), { nameHints: pypiNameHints(keywords) }));
     }
     if (mentionsMcp(component, projectEcosystems)) {
-      queries.push({ source: 'mcp_registry', query: keywords.join(' ') });
+      push(planned('mcp_registry', queryVariants(keywords, QUERY_BUDGETS.mcp_registry)));
     }
     // Pretrained weights are published on Hugging Face, not in a package registry.
     if (soundsLikeMl(`${component.name} ${component.description} ${keywords.join(' ')}`, 'any')) {
-      queries.push({ source: 'hf_models', query: keywords.slice(0, MAX_GITHUB_KEYWORDS).join(' ') });
+      push(planned('hf_models', queryVariants(keywords, QUERY_BUDGETS.hf_models)));
     }
   }
 

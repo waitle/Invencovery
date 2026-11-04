@@ -37,8 +37,16 @@ No app code is written; the output is a reuse report.
 
 - One run per condition; model output varies between runs.
 - B used a CLI wrapper rather than the real plugin, so skill auto-trigger was not exercised.
-- B hit tool friction: 3 of 4 default npm searches failed once (not reproducible later, likely transient),
-  and `rw_evaluate` required `no_service_reason` on every SDK-like candidate.
+- B hit tool friction: 3 of 4 default npm searches failed once, and `rw_evaluate` required `no_service_reason` on
+  every SDK-like candidate. Follow-up (2026-11-04): the npm failures were not transient. The planned npm query joined every
+  keyword (100+ characters) and the registry rejects `text` over 64 characters with HTTP 400 (`ERR_TEXT_LENGTH`); the
+  planned GitHub query ANDed 12 words and returned one unrelated repository. The planner now sends short per-source
+  queries (GitHub: up to 4 words plus alternatives when thin; npm: one keyword per query), and `rw_decompose` can run
+  the first round for every component in one call (`search: true`). Re-run on the same four components, unauthenticated,
+  from a cold cache: one call, about 1.6 s, and the four packages B finally chose
+  (`react-native-track-player`, `radio-browser-api`, `@music-metadata/icy`, `react-native-mmkv`) all appear in the first
+  round, three of them at rank 1, with the npm and GitHub records of the same project merged (so the npm license
+  `Apache-2.0` shows next to GitHub's `NOASSERTION`). B needed 9 `rw_search` calls to reach the same candidates.
 - The first version of the wrapper also printed `structuredContent`, which inflated B's context. This copy of the wrapper
   prints it only with `--json`.
 - Only the license claims were independently verified. Apple forum and GitHub issue references in the reports were not.

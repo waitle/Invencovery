@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { renderMarkdown } from '../../../src/core/ledger.js';
 import { DecomposeOutputSchema } from '../../../src/mcp/tools/decompose.js';
 import { cleanupTmpDirs, makeTmpDir } from '../../helpers/tmp.js';
-import { FIXED_NOW, PROJECT, component, createHarness } from './_harness.js';
+import { FIXED_NOW, PROJECT, candidate, component, createHarness, fakeAdapter } from './_harness.js';
 import type { Harness } from './_harness.js';
 
 let h: Harness | undefined;
@@ -36,7 +36,8 @@ describe('rw_decompose', () => {
     const md = plan['markdown-parser']!.queries;
     expect(md.map((q) => q.source)).toEqual(['github_repo', 'npm', 'pypi']);
     expect(md[0]!.query).toBe('markdown parser ast archived:false fork:false');
-    expect(md[1]!.query).toBe('markdown parser ast');
+    expect(md[1]!.query).toBe('markdown');
+    expect(md[1]!.alternatives).toEqual(['parser', 'ast']);
     expect(md[2]!.params?.nameHints).toContain('markdown-parser');
     expect(plan['fs-server']!.queries.map((q) => q.source)).toContain('mcp_registry');
     expect(out.budget).toEqual({ rounds_per_component: 3, evals_per_component: 5, web_per_component: 2 });
@@ -49,6 +50,54 @@ describe('rw_decompose', () => {
     const events = h.ledgerText().trim().split('\n').map((l) => JSON.parse(l) as { type: string; at: string });
     expect(events.map((e) => e.type)).toEqual(['project.set', 'component.upsert', 'component.upsert', 'component.upsert']);
     expect(events.every((e) => e.at === FIXED_NOW.toISOString())).toBe(true);
+  });
+
+  it('search: true runs the first round for every non-trivial component and returns it per component', async () => {
+    const gh = fakeAdapter('github_repo', (q) => ({
+      candidates: [candidate(`github:o/${q.query.split(' ')[0]}`, 'github_repo', { matched_via: { query: q.query, rank: 1 } })],
+    }));
+    const npm = fakeAdapter('npm', (q) => ({
+      candidates: [1, 2, 3, 4].map((i) => candidate(`npm:${q.query.split(' ')[0]}-${i}`, 'npm', { matched_via: { query: q.query, rank: i } })),
+    }));
+    h = await createHarness({ adapters: { github_repo: gh, npm } });
+    const r = await h.call('rw_decompose', {
+      project: { ...PROJECT },
+      components: [
+        component('Parser', { keywords: ['markdown', 'parser'] }),
+        component('Tiny', { trivial: true }),
+        component('Renderer', { keywords: ['pdf', 'render'] }),
+      ],
+      search: true,
+    });
+    expect(r.isError, r.text).toBe(false);
+    const out = DecomposeOutputSchema.parse(r.structured);
+    expect(out.searches?.map((s) => s.component_id)).toEqual(['parser', 'renderer']);
+    for (const s of out.searches ?? []) {
+      expect('error' in s).toBe(false);
+      if ('error' in s) continue;
+      expect(s.evidence_id).toMatch(/^ev_/);
+      expect(s.candidates.length).toBeGreaterThan(0);
+      expect(s.budget.rounds_used).toBe(0);
+    }
+    // The components searched are now `searching`; the trivial one stays pending.
+    expect(out.components.map((c) => c.status)).toEqual(['searching', 'pending', 'searching']);
+    const state = h.state();
+    expect(state.evidence.filter((e) => e.kind === 'search').map((e) => e.component_id)).toEqual(['parser', 'renderer']);
+    expect(gh.calls.map((c) => c.query)).toEqual(['markdown parser archived:false fork:false', 'pdf render archived:false fork:false']);
+    expect(r.text).toContain('## First search round (2 component(s))');
+    expect(r.text).toContain('npm:markdown-1');
+    expect(r.text).toContain('npm:pdf-1');
+    expect(r.text).toContain('rw_evaluate');
+    expect(r.text).not.toContain('search: true');
+  });
+
+  it('without search the output has no searches and the next step mentions the option', async () => {
+    h = await createHarness();
+    const r = await h.call('rw_decompose', { project: { ...PROJECT }, components: [component('Parser')] });
+    const out = DecomposeOutputSchema.parse(r.structured);
+    expect(out.searches).toBeUndefined();
+    expect(r.text).toContain('search: true');
+    expect(h.state().evidence).toEqual([]);
   });
 
   it('limits the plan to enabled sources', async () => {

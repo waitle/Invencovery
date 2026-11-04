@@ -239,7 +239,7 @@ describe('dedupe', () => {
         provenance: 'remote_cache',
       }),
     ]);
-    expect(out[0]?.matched_via).toEqual({ query: 'npm', rank: 2 });
+    expect(out[0]?.matched_via).toEqual({ query: 'npm', rank: 2, hits: 2 });
     expect(out[0]?.provenance).toBe('remote_cache');
   });
 

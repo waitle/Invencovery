@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { SearchOutputSchema, UNSCOPED_COMPONENT_ID } from '../../../src/mcp/tools/search.js';
+import { SearchOutputSchema, UNSCOPED_COMPONENT_ID, keywordOverlap } from '../../../src/mcp/tools/search.js';
 import { cleanupTmpDirs } from '../../helpers/tmp.js';
 import { PROJECT, candidate, component, createHarness, failingAdapter, fakeAdapter, seedComponents } from './_harness.js';
 import type { Harness } from './_harness.js';
@@ -39,8 +39,10 @@ describe('rw_search', () => {
     expect(r.isError).toBe(false);
     const out = SearchOutputSchema.parse(r.structured);
 
-    expect(out.candidates.map((c) => c.ref)).toEqual(['github:acme/md', 'github:other/x', 'npm:solo']);
+    // npm answers both keyword queries with the same packages: npm:solo (2 hits) sorts before github:other/x (1 hit) at rank 2.
+    expect(out.candidates.map((c) => c.ref)).toEqual(['github:acme/md', 'npm:solo', 'github:other/x']);
     expect(out.candidates[0]!.also_known_as).toEqual(['npm:acme-md']);
+    expect(out.candidates[0]!.matched_via.hits).toBe(3);
     expect(out.candidates[0]!.downloads_weekly).toBe(5000);
     expect(out.per_source.map((m) => [m.source, m.status])).toEqual([['github_repo', 'ok'], ['npm', 'ok']]);
     expect(out.degraded).toBe(false);
@@ -58,7 +60,7 @@ describe('rw_search', () => {
       minStars: 0,
     });
     expect(gh!.calls[0]!.ecosystem).toBeUndefined();
-    expect(npm!.calls[0]!.query).toBe('markdown library');
+    expect(npm!.calls.map((c) => c.query)).toEqual(['markdown', 'library']);
     expect(r.text).toContain('npm:solo');
   });
 
@@ -222,6 +224,142 @@ describe('rw_search', () => {
     const out = SearchOutputSchema.parse(r.structured);
     expect(out.candidates).toHaveLength(4);
     expect(out.candidates.map((c) => c.matched_via.rank)).toEqual([1, 1, 2, 2]);
+  });
+});
+
+describe('rw_search query alternatives (adaptive)', () => {
+  const RADIO = ['react native audio player', 'track player', 'background audio', 'lock screen controls', 'hls streaming'];
+  const seedRadio = (h: Harness) => seedComponents(h, [component('Player', { keywords: RADIO })]);
+
+  it('runs the next alternative only while a source is thin, merges by ref and counts hits', async () => {
+    const gh = fakeAdapter('github_repo', (q) => {
+      if (q.query.startsWith('react native audio player')) {
+        return { candidates: [candidate('github:a/one', 'github_repo', { matched_via: { query: q.query, rank: 1 } })] };
+      }
+      return {
+        candidates: [
+          candidate('github:A/one', 'github_repo', { matched_via: { query: q.query, rank: 1 } }),
+          candidate('github:b/two', 'github_repo', { matched_via: { query: q.query, rank: 2 } }),
+          candidate('github:c/three', 'github_repo', { matched_via: { query: q.query, rank: 3 } }),
+          candidate('github:d/four', 'github_repo', { matched_via: { query: q.query, rank: 4 } }),
+        ],
+      };
+    });
+    const npm = fakeAdapter('npm', (q) => ({
+      candidates: [1, 2, 3, 4, 5].map((i) => candidate(`npm:p${i}`, 'npm', { matched_via: { query: q.query, rank: i } })),
+    }));
+    h = await createHarness({ adapters: { github_repo: gh, npm } });
+    await seedRadio(h);
+    const r = await h.call('rw_search', { component_id: 'player' });
+    expect(r.isError).toBe(false);
+    const out = SearchOutputSchema.parse(r.structured);
+
+    // GitHub: primary was thin (1 < 4), the first alternative brought it to 4, so the second alternative did not run.
+    expect(gh.calls.map((c) => c.query)).toEqual([
+      'react native audio player archived:false fork:false',
+      'track player background audio archived:false fork:false',
+    ]);
+    // npm is eager: one query per keyword, all sent (the fake answers the same packages, so every one has 5 hits).
+    expect(npm.calls.map((c) => c.query)).toEqual(RADIO);
+    expect(out.candidates.find((c) => c.ref === 'npm:p1')!.matched_via).toEqual({ query: 'react native audio player', rank: 1, hits: 5 });
+    expect(out.per_source.find((m) => m.source === 'npm')!.message).toContain('5 keyword queries run');
+
+    const one = out.candidates.find((c) => c.ref === 'github:a/one')!;
+    expect(one.matched_via).toEqual({ query: 'react native audio player archived:false fork:false', rank: 1, hits: 2 });
+    expect(out.candidates.find((c) => c.ref === 'github:b/two')!.matched_via.rank).toBe(2);
+    const ghMeta = out.per_source.find((m) => m.source === 'github_repo')!;
+    expect(ghMeta).toMatchObject({ status: 'ok', count: 4 });
+    expect(ghMeta.query).toBe('react native audio player archived:false fork:false | track player background audio archived:false fork:false');
+    expect(ghMeta.message).toContain('2 query variants run');
+    expect(r.text).toContain('[2 hits]');
+    expect(r.text).toContain('+2 alternatives when thin');
+    // The evidence records the queries that were actually sent.
+    const ev = h.state().evidence.find((e) => e.id === out.evidence_id)!;
+    expect(ev.query).toContain('track player background audio archived:false');
+    expect(ev.query).not.toContain('lock screen controls archived:false');
+  });
+
+  it('a primary that did not answer stops the alternatives (the next query would fail the same way)', async () => {
+    const gh = fakeAdapter('github_repo', () => ({ candidates: [], meta: { status: 'rate_limited', message: 'GitHub repository search rate limit reached.' } }));
+    h = await createHarness({ adapters: { github_repo: gh }, env: { RECYCLEWHEEL_SOURCES: 'github_repo' } });
+    await seedRadio(h);
+    const out = SearchOutputSchema.parse((await h.call('rw_search', { component_id: 'player' })).structured);
+    expect(gh.calls).toHaveLength(1);
+    expect(out.per_source[0]).toMatchObject({ status: 'rate_limited', count: 0 });
+    expect(out.degraded).toBe(true);
+    expect(h.state().evidence[0]!.sources).toEqual([]);
+  });
+
+  it('eager npm queries that partly fail still answer, as partial', async () => {
+    const npm = fakeAdapter('npm', (q) =>
+      q.query === 'track player'
+        ? { candidates: [], meta: { status: 'error', message: 'npm registry search HTTP 500.' } }
+        : { candidates: [candidate(`npm:${q.query.replace(/\s+/g, '-')}`, 'npm', { matched_via: { query: q.query, rank: 1 } })] },
+    );
+    h = await createHarness({ adapters: { npm }, env: { RECYCLEWHEEL_SOURCES: 'npm' } });
+    await seedRadio(h);
+    const out = SearchOutputSchema.parse((await h.call('rw_search', { component_id: 'player' })).structured);
+    expect(npm.calls).toHaveLength(5);
+    expect(out.per_source[0]).toMatchObject({ status: 'partial', count: 4 });
+    expect(out.per_source[0]!.message).toContain('HTTP 500');
+    expect(out.candidates.map((c) => c.ref).sort()).toEqual(['npm:background-audio', 'npm:hls-streaming', 'npm:lock-screen-controls', 'npm:react-native-audio-player']);
+    expect(out.degraded).toBe(false);
+  });
+
+  it('eager results: candidates more keyword queries returned come first, then those whose text mentions more keyword words', async () => {
+    const npm = fakeAdapter('npm', (q) => {
+      // "radio" is in three keywords: a radio-button widget is returned by all three, the real client by two.
+      const widget = candidate('npm:ui-radio-group', 'npm', { description: 'Radio group widget', matched_via: { query: q.query, rank: 1 } });
+      const client = candidate('npm:radio-browser-api', 'npm', { description: 'Client for the radio browser API, station search', matched_via: { query: q.query, rank: 2 } });
+      const other = candidate(`npm:only-${q.query.replace(/\s+/g, '-')}`, 'npm', { matched_via: { query: q.query, rank: 3 } });
+      if (q.query === 'station search') return { candidates: [widget, other] };
+      return { candidates: [widget, client, other] };
+    });
+    h = await createHarness({ adapters: { npm }, env: { RECYCLEWHEEL_SOURCES: 'npm' } });
+    await seedComponents(h, [component('Directory', { keywords: ['radio browser api', 'radio directory', 'station search'] })]);
+    const out = SearchOutputSchema.parse((await h.call('rw_search', { component_id: 'directory' })).structured);
+    expect(out.candidates.slice(0, 2).map((c) => [c.ref, c.matched_via.hits, c.matched_via.rank])).toEqual([
+      ['npm:ui-radio-group', 3, 1],
+      ['npm:radio-browser-api', 2, 2],
+    ]);
+    // Same hits: the candidate mentioning more keyword words wins the tie.
+    const tie = fakeAdapter('npm', (q) => ({
+      candidates: [
+        candidate('npm:a-radio-thing', 'npm', { description: 'radio', matched_via: { query: q.query, rank: 1 } }),
+        candidate('npm:b-radio-client', 'npm', { description: 'radio browser api directory station search', matched_via: { query: q.query, rank: 2 } }),
+      ],
+    }));
+    const h2 = await createHarness({ adapters: { npm: tie }, env: { RECYCLEWHEEL_SOURCES: 'npm' } });
+    try {
+      await seedComponents(h2, [component('Directory', { keywords: ['radio browser api', 'radio directory', 'station search'] })]);
+      const o2 = SearchOutputSchema.parse((await h2.call('rw_search', { component_id: 'directory' })).structured);
+      expect(o2.candidates.map((c) => c.ref)).toEqual(['npm:b-radio-client', 'npm:a-radio-thing']);
+      expect(keywordOverlap({ name: 'x', description: 'stations near you' }, ['station', 'radio'])).toBe(1);
+    } finally {
+      await h2.close();
+    }
+  });
+
+  it('an explicit query is sent once per source, never with alternatives', async () => {
+    const gh = fakeAdapter('github_repo', () => ({ candidates: [] }));
+    h = await createHarness({ adapters: { github_repo: gh }, env: { RECYCLEWHEEL_SOURCES: 'github_repo' } });
+    await seedRadio(h);
+    await h.call('rw_search', { component_id: 'player', query: 'rntp' });
+    expect(gh.calls.map((c) => c.query)).toEqual(['rntp']);
+  });
+
+  it('caps a source at limit_per_source even when alternatives add candidates', async () => {
+    const gh = fakeAdapter('github_repo', (q) => ({
+      candidates: [1, 2, 3].map((i) => candidate(`github:${q.query.split(' ')[0]}/r${i}`, 'github_repo', { matched_via: { query: q.query, rank: i } })),
+    }));
+    h = await createHarness({ adapters: { github_repo: gh }, env: { RECYCLEWHEEL_SOURCES: 'github_repo' } });
+    await seedRadio(h);
+    const out = SearchOutputSchema.parse((await h.call('rw_search', { component_id: 'player', limit_per_source: 5 })).structured);
+    // 3 (thin: < 3? no, ceil(5/2) = 3 reached) -> only the primary ran.
+    expect(gh.calls).toHaveLength(1);
+    expect(out.candidates).toHaveLength(3);
+    const out4 = SearchOutputSchema.parse((await h.call('rw_search', { component_id: 'player', limit_per_source: 4 })).structured);
+    expect(out4.candidates).toHaveLength(3);
   });
 });
 

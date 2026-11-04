@@ -58,9 +58,9 @@ description: >-
 
 ### Step 2. 분해
 
-1. 작업을 **3~10개 컴포넌트**로 나눈다. 기준은 기능 경계이고, 컴포넌트마다 keywords를 3~6개 준다. 이유: 키워드는 검색 쿼리가 되며, 너무 적으면 노이즈가 많고 너무 많으면 결과가 없다.
+1. 작업을 **3~10개 컴포넌트**로 나눈다. 기준은 기능 경계이고, 컴포넌트마다 keywords를 3~6개 준다. 키워드 하나는 **1~3단어의 검색어**다(알려진 라이브러리 이름, 문제 영역, 동의어. 예 `["track player", "background audio", "lock screen controls"]`). 문장("react native에서 백그라운드로 HLS를 재생")은 쓰지 않는다. 이유: 검색 백엔드는 쿼리의 모든 단어를 맞추므로 긴 키워드는 결과가 0건이 된다. 서버는 키워드를 소스별 짧은 쿼리로 나눠 쓴다(GitHub는 4단어 이하로 묶고 나머지를 대안 쿼리로, npm은 키워드 하나씩 전부). 4단어가 넘는 키워드에는 경고가 붙는다.
 2. 표준 라이브러리로 되거나 약 50줄 이하인 컴포넌트는 `trivial: true`로 표시한다.
-3. `rw_decompose`를 호출한다: `project`(name, summary, license, distribution, ecosystems)와 `components`(name, description, keywords, ecosystem, kind, trivial).
+3. `rw_decompose`를 호출한다: `project`(name, summary, license, distribution, ecosystems)와 `components`(name, description, keywords, ecosystem, kind, trivial). 기본으로 `search: true`를 함께 준다. 그러면 trivial이 아닌 모든 컴포넌트의 첫 검색 라운드가 이 호출 안에서 실행되어 `searches[]`(컴포넌트별 `evidence_id`와 후보)로 돌아오므로 Step 3의 1번을 컴포넌트마다 반복할 필요가 없다. 이유: 호출 N번이 1번으로 줄고, 예산·증거 기록은 `rw_search`와 같다.
    - `project.license`는 대상 프로젝트의 LICENSE나 manifest에서 읽는다. 없으면 생략한다. 이유: 라이선스 호환성 판정의 기준이다.
    - `project.distribution`은 `library | application | saas | internal` 중 실제 배포 방식을 고른다. 이유: SaaS는 network copyleft(AGPL)가 걸리고, 내부 도구는 대부분 문제가 없다. 모르면 사용자에게 한 번 묻는다.
    - `project.markets`는 제품을 내놓을 나라의 코드 배열이다(ISO 3166-1 alpha-2 대문자, EU 가능, 1~10개, 예 `["KR"]`, `["US", "EU"]`). 사용자 요청, README, 사용 언어에서 읽고, 모르면 사용자에게 한 번 묻는다. 이유: 개인정보, AI, 통화 녹음, 스토어 규칙이 나라마다 달라서 관심사 질문과 확인 현황이 시장별로 갈린다. 생략하면 서버가 한글은 KR, 가나는 JP로 추정해 출력 `markets.source`에 `inferred`로 알리고, 추정도 못 하면 `none`과 경고를 낸다. `inferred`나 `none`이면 Step 9 보고에 "대상 시장: 가정함(KR) / 알 수 없음"이라고 적는다. 이전 호출에서 직접 준 값은 다시 부르면 유지된다.
@@ -73,8 +73,8 @@ description: >-
 
 trivial이 아닌 컴포넌트마다 반복한다.
 
-1. `rw_search({ component_id })`를 호출한다. 소스는 `search_plan`에 따른다. 출력의 `evidence_id`를 기록해 둔다.
-2. 후보 중 fit ≥ 3이 될 만한 것이 없으면 쿼리를 바꿔(동의어, 상위 개념, `query` 직접 지정) `rw_search`를 1회 더 한다.
+1. `rw_decompose({ search: true })`의 `searches[]`에 그 컴포넌트의 결과가 있으면 그것이 첫 라운드다(`evidence_id` 기록). 없으면 `rw_search({ component_id })`를 호출한다. 소스는 `search_plan`에 따르고, 서버는 소스마다 짧은 쿼리 여러 개를 돌려 ref 기준으로 합친다(`[N hits]`는 여러 쿼리가 돌려준 후보라는 뜻이고, `(+npm:...)`는 다른 소스의 같은 프로젝트가 병합된 것이다).
+2. 후보 중 fit ≥ 3이 될 만한 것이 없으면 쿼리를 바꿔(동의어, 상위 개념, `query` 직접 지정) `rw_search`를 1회 더 한다. `query`를 직접 주면 소스마다 그 쿼리 하나만 보낸다. 긴 문장이 아닌 2~4단어로 준다.
 3. 그래도 빈약하면 WebSearch를 1~2회 한다: `"<topic> library <ecosystem>"`, `"awesome <topic>"`. 결과는 `rw_record_evidence({ kind: 'web', tool: 'WebSearch', query, results, summary })`로 남긴다. 결과가 0건이어도 남긴다("없음"도 증거다).
 4. 구체적인 구현 패턴이 필요하면 GitHub 코드 검색(`sources: ['github_code']`, 토큰 필요) 또는 Grep MCP를 쓰고, 결과를 `kind: 'code_search'`로 남긴다.
 5. `degraded: true`면 `fallback_hint`를 따라 WebSearch나 `gh search repos`로 직접 조사하고 `rw_record_evidence`로 남긴다.
@@ -221,7 +221,7 @@ trivial이 아닌 컴포넌트마다 반복한다.
 | 도구 | 용도 | 기록되는 것 |
 |---|---|---|
 | `rw_status` | 환경, 예산, 원장 위치, 교차 관심사 확인 현황 점검 | 없음 |
-| `rw_decompose` | 프로젝트(대상 시장 포함)와 컴포넌트 등록, 검색 계획과 교차 관심사 체크리스트 생성 | project, component |
+| `rw_decompose` | 프로젝트(대상 시장 포함)와 컴포넌트 등록, 검색 계획과 교차 관심사 체크리스트 생성. `search: true`면 첫 검색 라운드까지 | project, component (+ search evidence) |
 | `rw_search` | 소스별 후보 검색 | search evidence |
 | `rw_evaluate` | 후보 점수화와 라이선스 판정 | evaluation, evaluate evidence |
 | `rw_record_evidence` | WebSearch, 코드 검색, 수동 확인 결과 기록. `concern`을 주면 교차 관심사 조사로, 거기에 `market`을 더하면 시장별 조사로 기록 | web/code_search/manual evidence (+ concern, market) |

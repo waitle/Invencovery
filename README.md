@@ -28,8 +28,8 @@ recyclewheel은 Claude Code 플러그인(스킬 + MCP 서버) 하나로 배포�
 
 기존 `search-first` 류 스킬은 "먼저 검색하라"는 **산문 규율**입니다. 호출을 대신해 주는 도구도, 캐시도, 기록도 없습니다. recyclewheel은 다음을 한 묶음으로 제공합니다.
 
-1. **분해**: 작업을 컴포넌트로 나누고 컴포넌트별 검색 계획(쿼리)을 만듭니다 (`rw_decompose`).
-2. **다중 소스 검색**: GitHub, npm, PyPI, MCP 공식 레지스트리, Hugging Face 모델(ML 컴포넌트일 때)을 어댑터로 검색해 하나의 `Candidate` 형태로 정규화하고 중복을 병합합니다 (`rw_search`).
+1. **분해**: 작업을 컴포넌트로 나누고 컴포넌트별 검색 계획을 만듭니다 (`rw_decompose`). 계획은 소스마다 **짧은 쿼리 여러 개**입니다. GitHub는 키워드를 4단어 이하로 묶은 기본 쿼리와 나머지 키워드로 만든 대안 쿼리(결과가 적을 때만 순서대로 실행), npm은 키워드 하나씩(모두 동시에 실행, 레지스트리의 64자 제한 준수)입니다. `search: true`를 주면 모든 컴포넌트의 첫 검색 라운드를 이 한 번의 호출에서 돌려 컴포넌트별로 돌려줍니다.
+2. **다중 소스 검색**: GitHub, npm, PyPI, MCP 공식 레지스트리, Hugging Face 모델(ML 컴포넌트일 때)을 어댑터로 검색해 하나의 `Candidate` 형태로 정규화하고 중복을 병합합니다 (`rw_search`). 여러 쿼리나 여러 소스가 돌려준 후보는 `matched_via.hits`로 표시되어 앞에 옵니다.
 3. **점수와 라이선스 판정**: 유지보수, 인기, 커뮤니티, 라이선스, 의존성, 적합도(`fit`)를 일관된 100점 척도로 계산하고, 프로젝트 라이선스·배포 형태 기준으로 호환성을 판정합니다 (`rw_evaluate`). 방식은 [scoring.md](skills/recyclewheel/reference/scoring.md), [license-matrix.md](skills/recyclewheel/reference/license-matrix.md)에 있습니다.
 4. **원장**: `adopt` / `extend` / `reference` / `build` 결정을 근거, 증거(`evidence_id`), 출처(attribution)와 함께 프로젝트 안의 JSONL에 남기고 Markdown 보고서와 NOTICES 초안으로 내보냅니다 (`rw_decide`, `rw_ledger`).
 5. **모델 가중치와 호스팅 서비스**: 코드와 라이선스가 따로인 모델 가중치(`hf:<owner>/<model>`)와, 저장소 지표가 없는 SaaS(`saas:<vendor>/<product>`)도 후보로 평가합니다. 모델 카드의 라이선스는 코드 라이선스와 같은 매트릭스로 판정하고, 사용자 정의 라이선스(`other`)는 `unknown`으로 둡니다. SaaS는 에이전트가 벤더 페이지에서 확인한 성숙도·가격·데이터 사용·종속성·탈출 경로로 점수를 매깁니다. 벤더의 도메인(`vendor_domains`)을 함께 받아, 인용한 증거의 URL이 그 도메인에 있는지로 약관의 출처를 서버가 `first_party`/`secondhand`/`none`으로 판정합니다. 가격이나 데이터 사용 약관을 확인하지 못했거나, 근거가 원장에 없거나, 다른 사이트(리셀러, 비교 페이지)에만 있으면 `reference`까지만 허용합니다. 서버는 페이지를 가져와 확인하지 않으므로 URL과 `vendor_domains`는 에이전트가 기록한 값입니다(원장과 보고서에 남아 감사할 수 있습니다).
@@ -111,8 +111,8 @@ claude mcp add recyclewheel --scope user -- node D:\path\to\recyclewheel\dist\cl
 
 1. `rw_status`로 토큰, 오프라인 여부, 예산, 원장 위치를 확인.
 2. 저장소의 manifest와 기존 모듈에서 이미 있는 것을 확인.
-3. `rw_decompose`로 3~10개 컴포넌트로 분해(예: Markdown 파서, PDF 렌더러, CLI 인자 처리).
-4. 컴포넌트별 `rw_search` → 상위 후보를 `rw_evaluate`(에이전트가 `fit` 0~5와 근거를 입력). 후보가 사전학습 모델을 불러오면 `weights_ref`로 그 모델을, 모델을 불러오지 않으면 `weights_exempt_reason`을, 호스팅 서비스면 `saas:` ref와 `saas` 블록을 넘깁니다(필수는 `vendor_domains`, `lock_in`, `exit_path` 셋이고, 읽은 벤더 페이지는 `source_url`로 적으면 서버가 증거로 기록합니다). SDK·플러그인 후보에는 그 서비스를 `service_ref`로 연결합니다.
+3. `rw_decompose({ ..., search: true })`로 3~10개 컴포넌트로 분해(예: Markdown 파서, PDF 렌더러, CLI 인자 처리)하고, 같은 호출에서 컴포넌트별 첫 검색 라운드를 받습니다. 키워드는 1~3단어의 검색어로 줍니다.
+4. 결과가 빈약한 컴포넌트만 쿼리를 바꿔 `rw_search` → 상위 후보를 `rw_evaluate`(에이전트가 `fit` 0~5와 근거를 입력). 후보가 사전학습 모델을 불러오면 `weights_ref`로 그 모델을, 모델을 불러오지 않으면 `weights_exempt_reason`을, 호스팅 서비스면 `saas:` ref와 `saas` 블록을 넘깁니다(필수는 `vendor_domains`, `lock_in`, `exit_path` 셋이고, 읽은 벤더 페이지는 `source_url`로 적으면 서버가 증거로 기록합니다). SDK·플러그인 후보에는 그 서비스를 `service_ref`로 연결합니다.
 5. `rw_decide`로 `adopt` / `extend` / `reference` / `build` 기록. `build`는 `no_candidate`, `license_incompatible`, `unmaintained_or_risky`, `too_heavy`, `core_differentiator`, `trivial`, `integration_glue` 중 하나의 사유가 필요합니다.
 6. 새 런타임 의존성이나 `conditional` 라이선스가 있으면 Reuse Report를 보여주고 진행 여부를 확인.
 7. `rw_decompose`의 `concerns_checklist`를 따라 비용, 배포 정책, 법무·개인정보, 운영, 보안을 웹에서 조사하고 `rw_record_evidence({ concern, kind: 'web', ... })`로 기록. 해당 없는 관심사도 이유와 함께 기록합니다.
@@ -133,8 +133,8 @@ claude mcp add recyclewheel --scope user -- node D:\path\to\recyclewheel\dist\cl
 | 도구 | 성격 | 설명 | 주요 인자 |
 |---|---|---|---|
 | `rw_status` | read-only | 버전, 토큰 출처(`env`/`gh_cli`/`none`), 오프라인 여부, 원격 캐시 상태, 레이트리밋, 어댑터 활성 여부, 예산, 캐시 크기, 원장 위치, 교차 관심사 커버리지(`cross_cutting[{ concern, checked, evidence_count, markets? }]`, `markets`는 대상 시장이 있을 때 `legal_privacy`의 시장별 현황). `.recyclewheel`/`ledger.jsonl`이 링크이면 `ledger_exists:false`와 경고. 결정이 1건 이상인데 확인하지 않은 관심사가 있으면 `cross-cutting concern not checked: <concern>` 경고 | `project_root` |
-| `rw_decompose` | 원장 기록 | 프로젝트와 컴포넌트(1~30개)를 검증·저장하고 컴포넌트별 검색 계획을 반환. ML로 보이는 컴포넌트는 `hf_models` 쿼리도 계획에 포함. 출력의 `concerns_checklist[{ concern, relevance, reason, questions, search_hints }]`는 교차 관심사 5개의 조사 목록(한국어·영어 키워드 규칙으로 `likely`/`consider` 구분)이고, `project.markets`가 있으면 `[KR]` 같은 접두어가 붙은 시장별 질문이 더해진다. 출력 `markets{ codes, source: input/inferred/none }`는 쓰인 대상 시장과 출처 | `project`(`markets?` 포함), `components[]`, `replace` |
-| `rw_search` | open-world, 원장 기록 | 소스별 어댑터를 병렬 호출해 정규화·중복 병합한 후보를 반환하고 검색 증거를 기록. 예산 경고와 하드 리밋(2배)이 있음 | `component_id`, `query`, `sources`, `limit_per_source`, `force`/`force_reason` |
+| `rw_decompose` | 원장 기록 (`search: true`면 open-world) | 프로젝트와 컴포넌트(1~30개)를 검증·저장하고 컴포넌트별 검색 계획을 반환. 계획의 `queries[]`는 소스별 기본 `query`와 `alternatives[]`(나머지 키워드로 만든 짧은 쿼리)이고, 4단어가 넘는 키워드에는 경고가 붙는다. `search: true`면 trivial이 아닌 모든 컴포넌트의 첫 `rw_search` 라운드를 이 호출에서 실행해(동시 2개) `searches[]`로 돌려준다(예산·증거는 `rw_search`와 같음). ML로 보이는 컴포넌트는 `hf_models` 쿼리도 계획에 포함. 출력의 `concerns_checklist[{ concern, relevance, reason, questions, search_hints }]`는 교차 관심사 5개의 조사 목록(한국어·영어 키워드 규칙으로 `likely`/`consider` 구분)이고, `project.markets`가 있으면 `[KR]` 같은 접두어가 붙은 시장별 질문이 더해진다. 출력 `markets{ codes, source: input/inferred/none }`는 쓰인 대상 시장과 출처 | `project`(`markets?` 포함), `components[]`, `replace`, `search` |
+| `rw_search` | open-world, 원장 기록 | 소스별 어댑터를 병렬 호출해 정규화·중복 병합한 후보를 반환하고 검색 증거를 기록. 소스마다 계획된 쿼리 여러 개를 쓴다: GitHub 같은 `adaptive` 소스는 기본 쿼리 뒤 대안을 결과가 `limit_per_source`의 절반에 못 미칠 때만 하나씩(실패한 쿼리 뒤에는 중단), npm 같은 `eager` 소스는 키워드별 쿼리를 모두 동시에 보내 rank 순으로 섞는다. 같은 ref는 합치고 `matched_via.hits`에 돌려준 쿼리 수를 적어 먼저 보여준다. `query`를 직접 주면 소스마다 그 하나만 보낸다. 예산 경고와 하드 리밋(2배)이 있음 | `component_id`, `query`, `sources`, `limit_per_source`, `force`/`force_reason` |
 | `rw_evaluate` | open-world, 원장 기록 | 후보(1~5개)를 보강 조회해 점수, 라이선스 판정, `hint`(adopt/extend/reference/build)를 계산. `hf:` 후보는 모델 카드 라이선스를, `saas:` 후보는 `saas` 블록으로 SaaS 점수(성숙도·약관·종속성·SDK·적합도 각 20점)를 계산 | `component_id`, `candidates[{ref, fit, fit_reason, weights_ref?, weights_exempt_reason?, service_ref?, no_service_reason?, saas?}]`, `project_license`, `distribution`, `deep` |
 | `rw_record_evidence` | 원장 기록 | 에이전트의 웹/코드 검색 결과를 증거로 기록(0건도 허용). `concern`을 주면 교차 관심사 조사로 기록하며(`market`을 더하면 대상 시장별 조사) 이때는 `component_id`가 선택 사항이고, 컴포넌트 검색 예산과 build 2소스 규칙에는 포함되지 않음(관심사별 웹 쿼리 `RECYCLEWHEEL_BUDGET_WEB`회, `legal_privacy`는 대상 시장 수를 곱한 만큼, 초과 시 경고만) | `component_id`, `concern`(`cost`/`distribution_policy`/`legal_privacy`/`operations`/`security`), `market`(`concern`과 함께만), `kind`(`web`/`code_search`/`manual`), `results[]`, `summary` |
 | `rw_decide` | 원장 기록 | 검증 규칙을 적용해 결정을 기록하고 `decision_id`와 경고를 반환. `ref`/`alternatives`에 `hf:`/`saas:` ref 허용. 가중치 라이선스가 `custom_model_license`/incompatible이거나 SaaS 약관이 미확인(`saas_terms_unverified`)이거나 근거가 원장에 없거나(`saas_evidence_missing`) 벤더 도메인 밖의 페이지뿐이면(`saas_terms_secondhand`) `adopt`/`extend`를 거부(`decided_by: "user"`이면 경고로 완화) | `component_id`, `decision`, `ref`, `rationale`, `build_reason`, `alternatives`, `attribution`, `override` |
@@ -273,7 +273,7 @@ RECYCLEWHEEL_REMOTE_CACHE_TOKEN=<토큰>
 - **PyPI는 검색 API가 없습니다.** 이름 프로브(후보 이름으로 JSON API 조회)와 GitHub `language:Python` 검색에 의존하고, `LIBRARIES_IO_API_KEY`가 있으면 libraries.io 검색을 더합니다. 좋은 PyPI 패키지를 놓칠 수 있습니다.
 - **`github_code`(코드 검색)는 GitHub 토큰이 필요합니다.** 토큰이 없으면 `unauthenticated`로 표시되고 Grep MCP 사용을 안내합니다. 비인증 저장소 검색은 분당 10회로 제한됩니다.
 - **contributors 같은 일부 지표는 `missing`일 수 있습니다.** 기여자 수와 최신 릴리스는 `deep: true` 평가에서만 수집하며, 이 두 응답은 원격 공유 캐시로 공유되지 않으므로 원격 캐시 의존 환경에서는 비어 있는 경우가 많습니다. 값이 없다고 후보를 제외하지는 않고 기본 점수를 부여하며 `missing`/`metrics_partial`로 표시합니다.
-- **키워드 검색 품질에는 한계가 있습니다.** 좋은 후보를 놓칠 수 있어 스킬이 쿼리를 바꾼 재검색과 웹 검색을 지시하지만, 완전한 탐색은 보장하지 않습니다.
+- **키워드 검색 품질에는 한계가 있습니다.** 좋은 후보를 놓칠 수 있어 스킬이 쿼리를 바꾼 재검색과 웹 검색을 지시하지만, 완전한 탐색은 보장하지 않습니다. 검색 백엔드는 쿼리의 모든 단어를 맞추므로 키워드는 1~3단어로 줘야 하고(서버가 소스별로 짧게 나눠 보냅니다), npm 검색은 `text`가 64자를 넘으면 HTTP 400을 돌려주므로 어댑터가 단어 경계에서 잘라 보냅니다. 여러 키워드가 한 단어를 공유하면(예 `radio`) 그 단어만 맞는 무관한 패키지가 `hits`가 높아 위에 올 수 있으니 설명을 보고 걸러야 합니다.
 - **법률 자문이 아닙니다.** 라이선스 판정은 SPDX 식과 단순화한 호환성 매트릭스에 기반한 보수적 휴리스틱입니다. 불확실하면 `unknown`으로 처리하며, adopt 전에 LICENSE 원문을 확인해야 합니다. 법적 효력이 필요한 결정은 전문가와 상의하세요.
 - 스킬 행동 시나리오(`test/skill-scenarios/*.md`)를 헤드리스로 돌려 본 적은 아직 없어, 스킬의 발동 정확도는 실사용에서 확인해야 합니다. 정적 점검(`npm run lint:skill`)만 자동화되어 있습니다.
 - 적합도(`fit`) 판단은 에이전트의 품질에 의존합니다. 점수는 결정의 근거를 구조화할 뿐 결정을 대신하지 않습니다.

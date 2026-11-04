@@ -116,7 +116,7 @@ export function normalizeRepoUrl(input: string | null | undefined): string | und
 // ---------------------------------------------------------------------------
 
 /** Canonical comparison key for a ref (case-folds github/npm, normalizes pypi). */
-function refKey(ref: CandidateRef): string {
+export function refKey(ref: CandidateRef): string {
   const parsed = parseRef(ref);
   if (!parsed) return ref;
   switch (parsed.scheme) {
@@ -224,9 +224,10 @@ function mergeGroup(members: readonly Candidate[], repoKey: string | undefined):
   const repositoryUrl = firstDefined(members.map((m) => normalizeRepoUrl(m.repository_url))) ?? repoKey;
   if (repositoryUrl !== undefined) merged.repository_url = repositoryUrl;
 
-  // Best (lowest) rank keeps the merged candidate high in the interleaved list.
+  // Best (lowest) rank keeps the merged candidate high in the interleaved list; hits add up across members.
   const best = members.reduce((a, b) => (b.matched_via.rank < a.matched_via.rank ? b : a));
-  merged.matched_via = { ...best.matched_via };
+  const hits = members.reduce((sum, m) => sum + (m.matched_via.hits ?? 1), 0);
+  merged.matched_via = { query: best.matched_via.query, rank: best.matched_via.rank, ...(hits > 1 ? { hits } : {}) };
 
   merged.provenance = members.reduce<Provenance>(
     (worst, m) =>
@@ -369,10 +370,11 @@ export function dedupe(candidates: readonly Candidate[]): Candidate[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Orders candidates by `matched_via.rank`, breaking ties by the order in which
- * each source first appears, then by input order (stable). With consecutive
- * per-source ranks this is a round-robin across sources: every source's best
- * hit first, then every source's second hit, and so on.
+ * Orders candidates by `matched_via.rank`, breaking ties by `matched_via.hits`
+ * (more queries or sources returned it: a relevance signal), then by the order
+ * in which each source first appears, then by input order (stable). With
+ * consecutive per-source ranks this is a round-robin across sources: every
+ * source's best hit first, then every source's second hit, and so on.
  */
 export function interleaveByRank(candidates: readonly Candidate[]): Candidate[] {
   const sourceOrder = new Map<Source, number>();
@@ -384,6 +386,7 @@ export function interleaveByRank(candidates: readonly Candidate[]): Candidate[] 
     .sort(
       (a, b) =>
         a.candidate.matched_via.rank - b.candidate.matched_via.rank ||
+        (b.candidate.matched_via.hits ?? 1) - (a.candidate.matched_via.hits ?? 1) ||
         (sourceOrder.get(a.candidate.source) ?? 0) - (sourceOrder.get(b.candidate.source) ?? 0) ||
         a.index - b.index,
     )

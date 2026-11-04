@@ -33,6 +33,17 @@ import {
 const REGISTRY = 'https://registry.npmjs.org';
 const DOWNLOADS = 'https://api.npmjs.org/downloads/point/last-week';
 const MAX_SIZE = 250;
+/** The registry rejects a `text` parameter outside 2-64 characters (HTTP 400, ERR_TEXT_LENGTH). */
+export const NPM_SEARCH_TEXT_MAX = 64;
+export const NPM_SEARCH_TEXT_MIN = 2;
+
+/** Cuts a query to the registry's limit at a word boundary when one exists past the midpoint. */
+export function clampNpmSearchText(query: string): string {
+  if (query.length <= NPM_SEARCH_TEXT_MAX) return query;
+  const head = query.slice(0, NPM_SEARCH_TEXT_MAX);
+  const lastSpace = head.lastIndexOf(' ');
+  return (lastSpace > NPM_SEARCH_TEXT_MAX / 2 ? head.slice(0, lastSpace) : head).trimEnd();
+}
 
 const SEARCH_REQUEST: HttpRequestOptions = { source: 'npm', ttlClass: 'search', shareable: true };
 const PACKAGE_REQUEST: HttpRequestOptions = { source: 'npm', ttlClass: 'package', shareable: true };
@@ -113,9 +124,17 @@ export function createNpmAdapter(deps: { http: HttpClient }): SourceAdapter {
         return skipped(query, `npm search is for the npm ecosystem; component ecosystem is ${q.ecosystem}.`);
       }
       if (!query) return skipped(query, 'Empty query.');
+      if (query.length < NPM_SEARCH_TEXT_MIN) {
+        return skipped(query, `npm search needs at least ${NPM_SEARCH_TEXT_MIN} characters.`);
+      }
+      const text = clampNpmSearchText(query);
+      const notes: string[] = [];
+      if (text !== query) {
+        notes.push(`query cut to ${text.length} characters ("${text}"): the npm registry limits search text to ${NPM_SEARCH_TEXT_MAX}.`);
+      }
 
       const size = Math.min(Math.max(Math.trunc(q.limit) || 1, 1), MAX_SIZE);
-      const url = `${REGISTRY}/-/v1/search?text=${encodeURIComponent(query)}&size=${size}`;
+      const url = `${REGISTRY}/-/v1/search?text=${encodeURIComponent(text)}&size=${size}`;
       const res = await http.getJson<unknown>(url, SEARCH_REQUEST);
       const status = fetchStatus(res);
       if (status !== 'ok') {
@@ -144,7 +163,8 @@ export function createNpmAdapter(deps: { http: HttpClient }): SourceAdapter {
         count: candidates.length,
         query,
       };
-      if (dropped > 0) meta.message = `${dropped} npm search result(s) could not be parsed and were dropped.`;
+      if (dropped > 0) notes.push(`${dropped} npm search result(s) could not be parsed and were dropped.`);
+      if (notes.length > 0) meta.message = notes.join(' ');
       return { candidates, meta };
     },
   };

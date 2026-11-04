@@ -32,10 +32,16 @@ import {
   SourceSchema,
 } from '../../types.js';
 import type { AppContext, ToolModule } from '../../types.js';
+import { SearchOutputSchema, candidateTableLines, performSearch } from './search.js';
+import type { SearchOutput } from './search.js';
 
 export const TOOL_NAME = 'rw_decompose';
 
 const MAX_TABLE_ROWS = 15;
+/** Candidate rows shown per component when `search: true`; the rest is in structuredContent. */
+const MAX_SEARCH_ROWS = 8;
+/** Components searched at the same time with `search: true` (each one already queries its sources in parallel). */
+const SEARCH_CONCURRENCY = 2;
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -108,6 +114,12 @@ export const decomposeInputShape = {
     .describe(
       'Default false: upsert by id. true marks components missing from this list as superseded (reported as a warning; the append-only ledger keeps them).',
     ),
+  search: z
+    .boolean()
+    .optional()
+    .describe(
+      'Default false. true also runs the first rw_search round for every non-trivial component right away (same budget, evidence and output as rw_search, returned per component in `searches`), so one call replaces N rw_search calls. Call rw_search yourself afterwards only where results are thin.',
+    ),
   project_root: z
     .string()
     .optional()
@@ -125,12 +137,23 @@ export const DecomposeOutputSchema = z.object({
         z.object({
           source: SourceSchema,
           query: z.string(),
+          /** Shorter follow-up queries built from the remaining keywords; rw_search runs them while results are thin. */
+          alternatives: z.array(z.string()).optional(),
           params: z.object({ nameHints: z.array(z.string()).optional() }).optional(),
         }),
       ),
       skip_reason: z.literal('trivial').optional(),
     }),
   ),
+  /** With `search: true`: the first search round of every non-trivial component (an rw_search output each), or why it could not run. */
+  searches: z
+    .array(
+      z.union([
+        SearchOutputSchema.extend({ component_id: z.string() }),
+        z.object({ component_id: z.string(), error: z.string() }),
+      ]),
+    )
+    .optional(),
   budget: z.object({
     rounds_per_component: z.number().int(),
     evals_per_component: z.number().int(),
@@ -182,12 +205,42 @@ function summaryText(out: DecomposeOutput, projectName: string): string {
     let searches: string;
     if (plan?.skip_reason === 'trivial') searches = 'skipped (trivial)';
     else if (!plan || plan.queries.length === 0) searches = 'none (enabled sources do not apply)';
-    else searches = plan.queries.map((q) => `${q.source}: ${codeSpan(q.query).replace(/\|/g, '\\|')}`).join('<br>');
+    else {
+      searches = plan.queries
+        .map((q) => {
+          const alt = q.alternatives && q.alternatives.length > 0 ? ` (+${q.alternatives.length} alt.)` : '';
+          return `${q.source}: ${codeSpan(q.query).replace(/\|/g, '\\|')}${alt}`;
+        })
+        .join('<br>');
+    }
     // `searches` already holds escaped code spans; only the name is escaped here.
     lines.push(`| ${cell(c.name)} (${codeSpan(c.id, 64)}) | ${c.status} | ${searches} |`);
   }
   if (out.components.length > MAX_TABLE_ROWS) {
     lines.push('', `_... and ${out.components.length - MAX_TABLE_ROWS} more component(s); see structuredContent._`);
+  }
+  if (out.search_plan.some((p) => p.queries.some((q) => q.alternatives !== undefined))) {
+    lines.push('', '"alt." queries are alternatives built from the remaining keywords; rw_search runs them only while a source returns few results.');
+  }
+
+  if (out.searches !== undefined) {
+    const nameById = new Map(out.components.map((c) => [c.id, c.name]));
+    lines.push('', `## First search round (${out.searches.length} component(s))`);
+    for (const s of out.searches) {
+      const title = `### ${cell(nameById.get(s.component_id) ?? s.component_id)} (${codeSpan(s.component_id, 64)})`;
+      if ('error' in s) {
+        lines.push('', title, '', `Not searched: ${softLine(s.error, 400)}`);
+        continue;
+      }
+      lines.push('', `${title}: ${s.candidates.length} candidate(s), evidence ${codeSpan(s.evidence_id)}`, '');
+      lines.push(...candidateTableLines(s.candidates, MAX_SEARCH_ROWS));
+      const sources = s.per_source.map((m) => `${m.source} ${m.status} (${m.count})`).join(', ');
+      lines.push('', `Sources: ${sources}.`);
+      const problems = s.per_source.filter((m) => m.status !== 'ok' && m.status !== 'cached' && m.message !== undefined);
+      for (const m of problems) lines.push(`- ${m.source}: ${softLine(m.message ?? '', 300)}`);
+      if (s.degraded && s.fallback_hint) lines.push(`Degraded: ${softLine(s.fallback_hint, 400)}`);
+      if (s.budget.warning) lines.push(`Budget warning: ${softLine(s.budget.warning)}`);
+    }
   }
   lines.push(
     '',
@@ -209,12 +262,49 @@ function summaryText(out: DecomposeOutput, projectName: string): string {
   lines.push(
     '',
     `Budget per component: ${out.budget.rounds_per_component} rw_search rounds, ${out.budget.evals_per_component} rw_evaluate candidates, ${out.budget.web_per_component} web queries.`,
-    'Next: call rw_search for each non-trivial component (use component_id), then rw_evaluate the best candidates.',
+    out.searches !== undefined
+      ? 'Next: pick up to 5 candidates per component, rate fit 0-5 with a reason, and call rw_evaluate. Call rw_search with a different query only where the round above was thin.'
+      : 'Next: call rw_search for each non-trivial component (use component_id), then rw_evaluate the best candidates. Tip: `search: true` on this tool runs that first round for every component in one call.',
   );
   return lines.join('\n');
 }
 
-function handleDecompose(ctx: AppContext, input: DecomposeToolInput): CallToolResult {
+/** Runs `fn` over `items` with at most `concurrency` in flight; results keep the input order. */
+async function mapLimited<T, R>(items: readonly T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array<R>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  return results;
+}
+
+type SearchEntry = NonNullable<DecomposeOutput['searches']>[number];
+
+/** The first search round of every planned (non-trivial, searchable) component, in plan order. */
+async function runFirstRound(
+  ctx: AppContext,
+  plan: DecomposeOutput['search_plan'],
+  projectRoot: string | undefined,
+): Promise<SearchEntry[]> {
+  const ids = plan.filter((p) => p.skip_reason === undefined && p.queries.length > 0).map((p) => p.component_id);
+  return mapLimited(ids, SEARCH_CONCURRENCY, async (component_id): Promise<SearchEntry> => {
+    try {
+      const done = await performSearch(ctx, { component_id, ...(projectRoot !== undefined ? { project_root: projectRoot } : {}) });
+      if ('error' in done) return { component_id, error: done.error };
+      const output: SearchOutput & { component_id: string } = { component_id, ...done.output };
+      return output;
+    } catch (err) {
+      return { component_id, error: redactGithubToken(err instanceof Error ? err.message : String(err)) };
+    }
+  });
+}
+
+async function handleDecompose(ctx: AppContext, input: DecomposeToolInput): Promise<CallToolResult> {
   try {
     const ledger = ctx.ledger(input.project_root);
     const state = ledger.read();
@@ -241,9 +331,14 @@ function handleDecompose(ctx: AppContext, input: DecomposeToolInput): CallToolRe
       validation.project.summary,
       ...validation.components.flatMap((c) => [c.name, c.description, ...c.keywords]),
     ].join(' ');
+    const searches = input.search === true ? await runFirstRound(ctx, plan, input.project_root) : undefined;
+    // A searched component is now `searching`; report the status after the round.
+    const after = searches !== undefined ? ledger.read() : undefined;
+    const statusOf = (id: string, fallback: string): string => after?.components.find((c) => c.id === id)?.status ?? fallback;
     const output: DecomposeOutput = {
-      components: validation.components.map((c) => ({ id: c.id, name: c.name, status: c.status })),
+      components: validation.components.map((c) => ({ id: c.id, name: c.name, status: statusOf(c.id, c.status) as typeof c.status })),
       search_plan: plan,
+      ...(searches !== undefined ? { searches } : {}),
       concerns_checklist: buildConcernsChecklist(concernText, validation.project.distribution, validation.markets.codes),
       markets: validation.markets,
       ...(validation.inherited.length > 0 ? { inherited_project_fields: validation.inherited } : {}),
@@ -276,10 +371,11 @@ export function registerDecomposeTool(server: McpServer, ctx: AppContext): void 
     {
       title: 'Decompose a project into components',
       description:
-        'Step 2 of the reuse-first workflow. Record the project and its components (1-30, each with keywords) in the ledger and get a deterministic search plan: one query per relevant source per component. Trivial components are skipped; components that sound like ML also get a Hugging Face model query (hf_models). The result also carries concerns_checklist: cross-cutting concerns (cost, distribution policy, legal/privacy, operations, security) that package search does not reveal; research each on the web and record it with rw_record_evidence(concern=...). Call this before rw_search.',
+        'Step 2 of the reuse-first workflow. Record the project and its components (1-30, each with 3-6 short keywords) in the ledger and get a deterministic search plan: per relevant source a short primary query plus alternatives built from the remaining keywords (rw_search runs those while results are thin). Trivial components are skipped; components that sound like ML also get a Hugging Face model query (hf_models). With search: true the first rw_search round of every non-trivial component runs in this call and comes back in `searches` (one call instead of N). The result also carries concerns_checklist: cross-cutting concerns (cost, distribution policy, legal/privacy, operations, security) that package search does not reveal; research each on the web and record it with rw_record_evidence(concern=...). Call this before rw_search.',
       inputSchema: decomposeInputShape,
       outputSchema: DecomposeOutputSchema.shape,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      // Without `search` the call is an idempotent upsert; with it, searches are recorded as evidence (open world, not idempotent).
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     (args) => handleDecompose(ctx, args as DecomposeToolInput),
   );

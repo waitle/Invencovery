@@ -233,7 +233,13 @@ export const CandidateSchema = z.object({
   repository_url: z.string().optional(),
   /** Refs of the same project from other sources, merged by dedupe. */
   also_known_as: z.array(CandidateRefSchema).optional(),
-  matched_via: z.object({ query: z.string(), rank: CountSchema }),
+  matched_via: z.object({
+    /** The first query that returned the candidate. */
+    query: z.string(),
+    rank: CountSchema,
+    /** Number of query variants (and merged sources) that returned it; present when more than one. A relevance signal. */
+    hits: CountSchema.optional(),
+  }),
   provenance: ProvenanceSchema,
 });
 export type Candidate = z.infer<typeof CandidateSchema>;

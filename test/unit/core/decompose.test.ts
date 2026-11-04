@@ -5,6 +5,9 @@ import {
   buildSearchPlan,
   planComponent,
   pypiNameHints,
+  queryMode,
+  queryVariants,
+  QUERY_BUDGETS,
   validateDecompose,
 } from '../../../src/core/decompose.js';
 import type { DecomposeComponentInput, DecomposeInput } from '../../../src/core/decompose.js';
@@ -161,7 +164,7 @@ describe('planComponent', () => {
       component_id: 'c1',
       queries: [
         { source: 'github_repo', query: 'markdown parser archived:false fork:false' },
-        { source: 'npm', query: 'markdown parser' },
+        { source: 'npm', query: 'markdown', alternatives: ['parser'] },
       ],
     });
   });
@@ -178,10 +181,12 @@ describe('planComponent', () => {
     ]);
   });
 
-  it('limits the github query to the first 4 keywords but keeps all for npm', () => {
+  it('limits the github query to 4 words (the rest become an alternative) and gives npm one keyword per query, 5 at most', () => {
     const r = plan(comp({ keywords: ['a', 'b', 'c', 'd', 'e', 'f'] }), ['npm']);
     expect(r.queries[0]?.query).toBe('a b c d archived:false fork:false');
-    expect(r.queries[1]?.query).toBe('a b c d e f');
+    expect(r.queries[0]?.alternatives).toEqual(['e f archived:false fork:false']);
+    expect(r.queries[1]?.query).toBe('a');
+    expect(r.queries[1]?.alternatives).toEqual(['b', 'c', 'd', 'e']);
   });
 
   it.each([
@@ -360,5 +365,89 @@ describe('validateDecompose: project fields kept from the ledger', () => {
     const r = validateDecompose({ ...bare(), replace: true }, [comp({ id: 'old-one' })], existingProject);
     expect(r.project).toMatchObject({ license: 'Apache-2.0', distribution: 'saas', ecosystems: ['pypi', 'npm'] });
     expect(r.inherited).toEqual(['ecosystems', 'license', 'distribution', 'markets']);
+  });
+});
+
+describe('queryVariants (short per-source queries)', () => {
+  const RADIO = ['react native audio player', 'track player', 'background audio', 'lock screen controls', 'hls streaming'];
+
+  it('packs whole keywords into the GitHub budget and offers the rest as alternatives', () => {
+    expect(queryVariants(RADIO, QUERY_BUDGETS.github_repo)).toEqual([
+      'react native audio player',
+      'track player background audio',
+      'lock screen controls',
+    ]);
+  });
+
+  it('gives npm one keyword per query (its ranking degrades when phrases are concatenated), within 64 characters', () => {
+    const variants = queryVariants(RADIO, QUERY_BUDGETS.npm);
+    expect(variants).toEqual(RADIO);
+    for (const v of variants) expect(v.length).toBeLessThanOrEqual(64);
+    expect(queryVariants([...RADIO, 'six', 'seven'], QUERY_BUDGETS.npm)).toHaveLength(5);
+    expect(queryVariants(['x'.repeat(80)], QUERY_BUDGETS.npm)).toEqual([]);
+    expect(queryVariants(['react native audio player streaming background lock screen'], QUERY_BUDGETS.npm)).toEqual([
+      'react native audio player streaming background',
+    ]);
+  });
+
+  it('counts distinct words, so a repeated word does not spend the token budget twice', () => {
+    expect(queryVariants(['audio player', 'audio streaming', 'audio'], QUERY_BUDGETS.github_repo)).toEqual([
+      'audio player audio streaming audio',
+    ]);
+  });
+
+  it('cuts a keyword that is a sentence down to the budget instead of dropping it', () => {
+    expect(queryVariants(['convert markdown files into pdf documents quickly'], QUERY_BUDGETS.github_repo)).toEqual([
+      'convert markdown files into',
+    ]);
+  });
+
+  it('returns at most one primary and two alternatives, and nothing for empty keywords', () => {
+    const many = ['a1', 'b2', 'c3', 'd4', 'e5', 'f6', 'g7', 'h8'];
+    expect(queryVariants(many, { maxTokens: 1, maxChars: 64 })).toEqual(['a1', 'b2', 'c3']);
+    expect(queryVariants(many, { maxTokens: 1, maxChars: 64, maxVariants: 1 })).toEqual(['a1']);
+    expect(queryVariants(['   ', ''], QUERY_BUDGETS.npm)).toEqual([]);
+  });
+
+  it('plans alternatives per source and a single pypi query', () => {
+    const r = planComponent(comp({ keywords: RADIO }), ['npm', 'pypi']);
+    const gh = r.queries.find((q) => q.source === 'github_repo')!;
+    expect(gh.query).toBe('react native audio player archived:false fork:false');
+    expect(gh.alternatives).toEqual([
+      'track player background audio archived:false fork:false',
+      'lock screen controls archived:false fork:false',
+    ]);
+    const npm = r.queries.find((q) => q.source === 'npm')!;
+    expect(npm.query).toBe('react native audio player');
+    expect(npm.alternatives).toEqual(['track player', 'background audio', 'lock screen controls', 'hls streaming']);
+    const pypi = r.queries.find((q) => q.source === 'pypi')!;
+    expect(pypi.alternatives).toBeUndefined();
+    expect(pypi.query.length).toBeLessThanOrEqual(64);
+  });
+
+  it('has no GitHub alternatives when the keywords fit one query; npm still gets one query per keyword', () => {
+    const r = planComponent(comp(), ['npm']);
+    expect(r.queries.find((q) => q.source === 'github_repo')!.alternatives).toBeUndefined();
+    expect(r.queries.find((q) => q.source === 'npm')).toEqual({ source: 'npm', query: 'markdown', alternatives: ['parser'] });
+    expect(queryMode('npm')).toBe('eager');
+    expect(queryMode('github_repo')).toBe('adaptive');
+    expect(queryMode('github_code')).toBe('adaptive');
+  });
+});
+
+describe('keyword quality warnings', () => {
+  it('warns about keywords that are sentences, not for trivial components', () => {
+    const long = 'play live hls mp3 aac streams in react native';
+    const r = validateDecompose({
+      project: { name: 'p', summary: 's', ecosystems: ['npm'], markets: ['US'] },
+      components: [
+        { name: 'Player', description: 'd', keywords: [long, 'audio'] },
+        { name: 'Tiny', description: 'd', keywords: [long], trivial: true },
+      ],
+    });
+    expect(r.errors).toEqual([]);
+    expect(r.warnings).toHaveLength(1);
+    expect(r.warnings[0]).toContain('`player`');
+    expect(r.warnings[0]).toContain('more than 4 words');
   });
 });
