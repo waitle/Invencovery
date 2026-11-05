@@ -58,7 +58,7 @@ description: >-
 
 ### Step 2. 분해
 
-1. 작업을 **3~10개 컴포넌트**로 나눈다. 기준은 기능 경계이고, 컴포넌트마다 keywords를 3~6개 준다. 키워드 하나는 **1~3단어의 검색어**다(알려진 라이브러리 이름, 문제 영역, 동의어. 예 `["track player", "background audio", "lock screen controls"]`). 문장("react native에서 백그라운드로 HLS를 재생")은 쓰지 않는다. 이유: 검색 백엔드는 쿼리의 모든 단어를 맞추므로 긴 키워드는 결과가 0건이 된다. 서버는 키워드를 소스별 짧은 쿼리로 나눠 쓴다(GitHub는 4단어 이하로 묶고 나머지를 대안 쿼리로, npm은 키워드 하나씩 전부). 4단어가 넘는 키워드에는 경고가 붙는다.
+1. 작업을 **3~10개 컴포넌트**로 나눈다. 기준은 기능 경계이고, 컴포넌트마다 keywords를 3~6개 준다. 키워드 하나는 **1~3단어의 검색어**다(알려진 라이브러리 이름, 문제 영역, 동의어. 예 `["markdown parser", "commonmark", "syntax tree"]`). 문장("react native에서 백그라운드로 HLS를 재생")은 쓰지 않는다. 이유: 검색 백엔드는 쿼리의 모든 단어를 맞추므로 긴 키워드는 결과가 0건이 된다. 서버는 키워드를 소스별 짧은 쿼리로 나눠 쓴다(GitHub는 4단어 이하로 묶고 나머지를 대안 쿼리로, npm은 키워드 하나씩 전부). 4단어가 넘는 키워드에는 경고가 붙는다.
 2. 표준 라이브러리로 되거나 약 50줄 이하인 컴포넌트는 `trivial: true`로 표시한다.
 3. `rw_decompose`를 호출한다: `project`(name, summary, license, distribution, ecosystems)와 `components`(name, description, keywords, ecosystem, kind, trivial). 기본으로 `search: true`를 함께 준다. 그러면 trivial이 아닌 모든 컴포넌트의 첫 검색 라운드가 이 호출 안에서 실행되어 `searches[]`(컴포넌트별 `evidence_id`와 후보)로 돌아오므로 Step 3의 1번을 컴포넌트마다 반복할 필요가 없다. 이유: 호출 N번이 1번으로 줄고, 예산·증거 기록은 `rw_search`와 같다.
    - `project.license`는 대상 프로젝트의 LICENSE나 manifest에서 읽는다. 없으면 생략한다. 이유: 라이선스 호환성 판정의 기준이다.
