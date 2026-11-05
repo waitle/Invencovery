@@ -223,6 +223,34 @@ const LatestSchema = z.looseObject({
 
 const DownloadsSchema = z.looseObject({ downloads: z.number().nonnegative() });
 
+/**
+ * Weekly downloads and last publish date of exactly `name` from the registry
+ * search (registry.npmjs.org), or undefined when the search fails or does not
+ * list that package. Used when the downloads API host cannot be reached.
+ */
+async function searchStats(
+  http: HttpClient,
+  name: string,
+): Promise<{ downloads_weekly?: number; last_release_at?: string; provenance: Provenance } | undefined> {
+  if (name.length < NPM_SEARCH_TEXT_MIN || name.length > NPM_SEARCH_TEXT_MAX) return undefined;
+  const res = await http.getJson<unknown>(`${REGISTRY}/-/v1/search?text=${encodeURIComponent(name)}&size=10`, SEARCH_REQUEST);
+  if (fetchStatus(res) !== 'ok') return undefined;
+  const body = SearchResponseSchema.safeParse(res.data);
+  if (!body.success) return undefined;
+  for (const raw of body.data.objects) {
+    const item = SearchItemSchema.safeParse(raw);
+    if (!item.success || item.data.package.name !== name) continue;
+    const weekly = item.data.downloads?.weekly;
+    const date = toIso(item.data.package.date);
+    return {
+      ...(typeof weekly === 'number' && weekly >= 0 ? { downloads_weekly: Math.round(weekly) } : {}),
+      ...(date !== undefined ? { last_release_at: date } : {}),
+      provenance: res.provenance,
+    };
+  }
+  return undefined;
+}
+
 /** `SEE LICENSE IN ...` and `UNLICENSED` carry no SPDX identifier. */
 function npmLicense(doc: z.infer<typeof LatestSchema>): string | null {
   const types: string[] = [];
@@ -240,7 +268,9 @@ function npmLicense(doc: z.infer<typeof LatestSchema>): string | null {
 /**
  * Enricher for `npm:` refs. HTTP failures do not throw: the result then has
  * empty metrics, `license_spdx: null` and the unobtained metrics in `missing`
- * (license, direct_dependencies, deprecated, downloads_weekly).
+ * (license, direct_dependencies, deprecated, downloads_weekly). When the
+ * downloads API (api.npmjs.org) fails, the registry search supplies the weekly
+ * downloads and the last publish date (`last_release_at`) instead.
  */
 export function createNpmEnricher(deps: { http: HttpClient }): Enricher {
   const { http } = deps;
@@ -288,8 +318,19 @@ export function createNpmEnricher(deps: { http: HttpClient }): Enricher {
       if (license === null) missing.push('license');
 
       const dl = fetchStatus(downloads) === 'ok' ? DownloadsSchema.safeParse(downloads.data) : undefined;
-      if (dl?.success) metrics.downloads_weekly = Math.round(dl.data.downloads);
-      else missing.push('downloads_weekly');
+      if (dl?.success) {
+        metrics.downloads_weekly = Math.round(dl.data.downloads);
+      } else {
+        // api.npmjs.org is a separate host that proxies and firewalls often block while the registry itself is reachable.
+        // The registry search reports the weekly downloads and the last publish date of a package, so one call fills both.
+        const fallback = await searchStats(http, name);
+        if (fallback !== undefined) {
+          provenance.push(fallback.provenance);
+          if (fallback.downloads_weekly !== undefined) metrics.downloads_weekly = fallback.downloads_weekly;
+          if (fallback.last_release_at !== undefined) metrics.last_release_at = fallback.last_release_at;
+        }
+        if (metrics.downloads_weekly === undefined) missing.push('downloads_weekly');
+      }
 
       const out: Awaited<ReturnType<Enricher['enrich']>> = {
         metrics,

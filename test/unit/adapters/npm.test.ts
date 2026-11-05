@@ -204,6 +204,7 @@ describe('npm enricher', () => {
     const http = new FakeHttpClient({
       'https://registry.npmjs.org/gone/latest': notFound(),
       'https://api.npmjs.org/downloads/point/last-week/gone': failure('rate_limited'),
+      'https://registry.npmjs.org/-/v1/search?text=gone&size=10': ok({ objects: [] }),
     });
     const out = await createNpmEnricher({ http }).enrich('npm:gone', ENRICH);
     expect(out.metrics).toEqual({});
@@ -211,16 +212,36 @@ describe('npm enricher', () => {
     expect(out.missing).toEqual(['direct_dependencies', 'deprecated', 'license', 'downloads_weekly']);
   });
 
-  it('keeps registry data when only the downloads call fails', async () => {
+  it('keeps registry data when the downloads call and its search fallback both fail', async () => {
     const http = new FakeHttpClient({
       [LATEST_SCOPED_URL]: ok(fixture('latest-scoped.json'), { provenance: 'local_cache' }),
       [DOWNLOADS_SCOPED_URL]: failure('timeout'),
+      'https://registry.npmjs.org/-/v1/search?text=%40babel%2Fcore&size=10': failure('network'),
     });
     const out = await createNpmEnricher({ http }).enrich('npm:@babel/core', ENRICH);
     expect(out.metrics.direct_dependencies).toBe(16);
     expect(out.metrics.downloads_weekly).toBeUndefined();
     expect(out.missing).toEqual(['downloads_weekly']);
     expect(out.provenance).toBe('local_cache');
+  });
+
+  it('takes downloads and the last publish date from the registry search when the downloads API is unreachable', async () => {
+    const hit = (name: string, weekly: number) => ({ downloads: { weekly }, package: { name, date: '2026-09-18T10:00:00.000Z' } });
+    const http = new FakeHttpClient({
+      [LATEST_SCOPED_URL]: ok(fixture('latest-scoped.json')),
+      [DOWNLOADS_SCOPED_URL]: failure('network'),
+      'https://registry.npmjs.org/-/v1/search?text=%40babel%2Fcore&size=10': ok({
+        objects: [hit('@babel/core-like', 9), hit('@babel/core', 681946)],
+      }),
+    });
+    const out = await createNpmEnricher({ http }).enrich('npm:@babel/core', ENRICH);
+    expect(out.metrics.downloads_weekly).toBe(681946);
+    expect(out.metrics.last_release_at).toBe('2026-09-18T10:00:00.000Z');
+    expect(out.missing).toEqual([]);
+    // The search is a fallback only: a working downloads API is not followed by a search.
+    const http2 = new FakeHttpClient({ [LATEST_SCOPED_URL]: ok(fixture('latest-scoped.json')), [DOWNLOADS_SCOPED_URL]: ok(fixture('downloads.json')) });
+    await createNpmEnricher({ http: http2 }).enrich('npm:@babel/core', ENRICH);
+    expect(http2.urls.some((u) => u.includes('/-/v1/search'))).toBe(false);
   });
 });
 
