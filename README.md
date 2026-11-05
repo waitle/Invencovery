@@ -40,11 +40,13 @@ recyclewheel은 Claude Code 플러그인(스킬 + MCP 서버) 하나로 배포�
 
 ## 에이전트 혼자 찾는 것과 비교하면
 
-에이전트가 WebSearch와 curl로 직접 찾는 방식과 견주어 이 도구가 내세우는 것은 네 가지입니다.
+실제 에이전트로 같은 과제를 비교한 결과(2026-11-05, [bench/radio-app](bench/radio-app/README.md#re-run-with-real-agents-2026-11-05))는 아직 **비용 면에서 이 도구가 앞서지 않습니다**. recyclewheel을 쓴 두 실행이 도구 없는 실행보다 토큰과 시간을 약 40% 더 썼고(약 166~169k 대 118k 토큰, 약 595초 대 421초), 세 실행 모두 핵심 라이선스 함정을 찾았습니다. 늘어난 비용은 `rw_*` 호출(11~12회)이 아니라 절차가 요구하는 추가 웹 조사와 증거 기록, 큰 스킬 본문에서 나왔습니다. 그 실행에서 드러난 도구 결함(차단된 메타데이터 호스트에서 점수가 모두 같아짐, 비표준 라이선스를 "없음"으로 표시, 패키지와 저장소의 라이선스 차이 미표시)은 고쳤지만 실제 에이전트로 다시 재지는 않았습니다.
 
-- **더 정확하게 찾는다.** 같은 프로젝트의 GitHub 저장소와 npm/PyPI 패키지가 한 행으로 합쳐지고, 설치하게 될 **패키지 ref가 앞에** 옵니다. 라이선스는 배포된 패키지 기준으로 판정합니다(예: `react-native-track-player`는 GitHub 기본 브랜치(v5)가 상업 라이선스지만 npm 4.x는 Apache-2.0이라, GitHub만 보면 `unknown`, npm을 보면 `compatible`). 검색 결과의 상위 5개에는 **Preview**(fit을 뺀 점수 0~80, 프로젝트 기준 라이선스 판정, `stale`/`deprecated` 플래그)가 붙어 평가할 후보를 바로 고를 수 있습니다.
+이 도구가 겨냥하는 장점은 네 가지입니다.
+
+- **더 정확하게 찾는다.** 같은 프로젝트의 GitHub 저장소와 npm/PyPI 패키지가 한 행으로 합쳐지고(원본 저장소 URL을 단 포크가 있어도 저장소 이름과 같은 패키지는 합쳐짐), 설치하게 될 **패키지 ref가 앞에** 옵니다. 두 출처의 라이선스가 다르면 그 행에 `Apache-2.0 ≠ github:...: none`과 `license_differs_by_source`가 표시되고, `rw_evaluate`는 `license_differs_from_repo`를 냅니다. `SEE LICENSE IN`/`UNLICENSED`는 "라이선스 없음"이 아니라 `custom_license`(대개 상업 라이선스)입니다. 라이선스는 배포된 패키지 기준으로 판정합니다(예: `react-native-track-player`는 GitHub 기본 브랜치(v5)가 상업 라이선스지만 npm 4.x는 Apache-2.0이라, GitHub만 보면 `unknown`, npm을 보면 `compatible`). 검색 결과의 상위 5개에는 **Preview**(fit을 뺀 점수 0~80, 프로젝트 기준 라이선스 판정, `stale`/`deprecated` 플래그)가 붙어 평가할 후보를 바로 고를 수 있습니다.
 - **더 적은 호출로 끝난다.** `rw_decompose({ search: true })`가 분해와 모든 컴포넌트의 첫 검색을 한 번에, `rw_decide({ decisions })`와 `rw_record_evidence({ entries })`가 결정과 증거를 한 번에 기록합니다. 4개 컴포넌트 기준 표준 흐름은 **MCP 호출 8번**입니다(호출 한 번이 모델 턴 한 번이므로 토큰과 시간을 함께 줄입니다).
-- **같은 결과를 다시 사지 않는다.** 모든 API 응답이 로컬 SQLite에 캐시되어(ETag 재검증, stale-if-error) 재검색과 재평가는 네트워크 없이 끝납니다.
+- **같은 결과를 다시 사지 않는다.** 모든 API 응답이 로컬 SQLite에 캐시되어(ETag 재검증, stale-if-error) 재검색과 재평가는 네트워크 없이 끝납니다. deps.dev나 npm 다운로드 API가 막힌 환경에서는 npm 레지스트리 검색으로 다운로드 수와 최근 배포일을 채웁니다.
 - **증거가 남는다.** 모든 결정이 `evidence_id`와 함께 원장에 남고 Reuse Report, NOTICES 초안으로 내보내집니다. 에이전트 혼자 찾으면 남지 않는 부분입니다.
 
 측정값([bench/flow-cost.mjs](bench/flow-cost.mjs), LLM 없이 도구 흐름만 실행, 4개 컴포넌트, 비인증, 빈 캐시, 2026-11-04):

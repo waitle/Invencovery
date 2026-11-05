@@ -231,6 +231,13 @@ export const CandidateSchema = z.object({
   deprecated: z.boolean().optional(),
   /** Normalized: https://github.com/owner/repo (lowercase, no .git). */
   repository_url: z.string().optional(),
+  /**
+   * Set by dedupe when the merged sources disagree on the license (for example
+   * the GitHub repository says none or NOASSERTION while the npm package says
+   * Apache-2.0): every member's ref and license. Often a license change between
+   * the repository's default branch and the published version.
+   */
+  license_by_ref: z.array(z.object({ ref: CandidateRefSchema, license: z.string().nullable() })).optional(),
   /** Refs of the same project from other sources, merged by dedupe. */
   also_known_as: z.array(CandidateRefSchema).optional(),
   /**
@@ -720,6 +727,8 @@ export interface Enricher {
     flags?: string[];
     /** Name, description and topics, one sanitized line, for the "uses ML weights" heuristic. */
     descriptor?: string;
+    /** Set by `rw_evaluate` (not by enrichers): the package and its repository declare different licenses. */
+    license_conflict?: { package: string | null; repository: string | null };
   }>;
 }
 

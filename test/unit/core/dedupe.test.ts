@@ -350,4 +350,62 @@ describe('dedupe preferEcosystem', () => {
     expect(dedupe([gh, npm], { preferEcosystem: 'pypi' })[0]?.ref).toBe('github:o/x');
   });
 });
+
+describe('dedupe license disagreement', () => {
+  const base = { name: 'x', url: 'u', description: 'd', matched_via: { query: 'q', rank: 1 }, provenance: 'live' } as const;
+  it('keeps every source license when the merged sources disagree', () => {
+    const [m] = dedupe(
+      [
+        { ...base, ref: 'github:o/x', source: 'github_repo', license_spdx: null },
+        { ...base, ref: 'npm:x', source: 'npm', license_spdx: 'Apache-2.0', repository_url: 'https://github.com/o/x' },
+      ],
+      { preferEcosystem: 'npm' },
+    );
+    expect(m?.license_spdx).toBe('Apache-2.0');
+    expect(m?.license_by_ref).toEqual([
+      { ref: 'npm:x', license: 'Apache-2.0' },
+      { ref: 'github:o/x', license: null },
+    ]);
+  });
+  it('sets nothing when the sources agree or one is silent', () => {
+    const [m] = dedupe([
+      { ...base, ref: 'github:o/x', source: 'github_repo', license_spdx: 'MIT' },
+      { ...base, ref: 'npm:x', source: 'npm', license_spdx: 'mit', repository_url: 'https://github.com/o/x' },
+    ]);
+    expect(m?.license_by_ref).toBeUndefined();
+    const [n] = dedupe([
+      { ...base, ref: 'github:o/x', source: 'github_repo' },
+      { ...base, ref: 'npm:x', source: 'npm', license_spdx: 'MIT', repository_url: 'https://github.com/o/x' },
+    ]);
+    expect(n?.license_by_ref).toBeUndefined();
+  });
+});
+
+describe('dedupe with forks published under the original repository URL', () => {
+  const base = { url: 'u', description: 'd', provenance: 'live' } as const;
+  const repo = 'https://github.com/doublesymmetry/react-native-track-player';
+  it('merges the package named like the repository even when forks make npm ambiguous', () => {
+    const out = dedupe(
+      [
+        { ...base, ref: 'github:doublesymmetry/react-native-track-player', source: 'github_repo', name: 'r', license_spdx: null, matched_via: { query: 'q', rank: 1 } },
+        { ...base, ref: 'npm:react-native-track-player', source: 'npm', name: 'react-native-track-player', license_spdx: 'Apache-2.0', repository_url: repo, matched_via: { query: 'q', rank: 1 } },
+        { ...base, ref: 'npm:@roitium/react-native-track-player', source: 'npm', name: 'fork', license_spdx: 'Apache-2.0', repository_url: repo, matched_via: { query: 'q', rank: 2 } },
+      ],
+      { preferEcosystem: 'npm' },
+    );
+    expect(out.map((c) => c.ref)).toEqual(['npm:react-native-track-player', 'npm:@roitium/react-native-track-player']);
+    expect(out[0]!.also_known_as).toEqual(['github:doublesymmetry/react-native-track-player']);
+    expect(out[0]!.license_by_ref).toEqual([
+      { ref: 'npm:react-native-track-player', license: 'Apache-2.0' },
+      { ref: 'github:doublesymmetry/react-native-track-player', license: null },
+    ]);
+  });
+  it('does not report a custom license file against GitHub NOASSERTION as a disagreement', () => {
+    const [m] = dedupe([
+      { ...base, ref: 'github:o/player', source: 'github_repo', name: 'r', license_spdx: null, matched_via: { query: 'q', rank: 1 } },
+      { ...base, ref: 'npm:player', source: 'npm', name: 'player', license_spdx: 'SEE LICENSE IN <license.txt>', repository_url: 'https://github.com/o/player', matched_via: { query: 'q', rank: 1 } },
+    ]);
+    expect(m?.license_by_ref).toBeUndefined();
+  });
+});
 });

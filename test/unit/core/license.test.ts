@@ -7,6 +7,7 @@ import {
   MATRIX_CELL_LABEL,
   classify,
   judge,
+  isCustomLicenseText,
   normalizeSpdx,
 } from '../../../src/core/license.js';
 import type { LicenseCategory } from '../../../src/core/license.js';
@@ -327,7 +328,17 @@ describe('judge: unknown, NOASSERTION and non-SPDX candidates', () => {
     const v = judge({ candidate: 'SEE LICENSE IN LICENSE.md', project: 'MIT', distribution: 'library', source: 'npm' });
     expect(v.verdict).toBe('unknown');
     expect(v.candidate_spdx).toBe('SEE LICENSE IN LICENSE.md');
-    expect(v.notes.join(' ')).toContain('not a valid SPDX expression');
+    expect(v.notes.join(' ')).toContain('Custom license');
+    const other = judge({ candidate: 'Some License 1.0', project: 'MIT', distribution: 'library', source: 'npm' });
+    expect(other.notes.join(' ')).toContain('not a valid SPDX expression');
+  });
+
+  it('marks custom license texts (usually commercial) apart from a missing license', () => {
+    expect(isCustomLicenseText('SEE LICENSE IN <license.txt>')).toBe(true);
+    expect(isCustomLicenseText('UNLICENSED')).toBe(true);
+    expect(isCustomLicenseText('LicenseRef-Commercial')).toBe(true);
+    expect(isCustomLicenseText('MIT')).toBe(false);
+    expect(isCustomLicenseText(null)).toBe(false);
   });
 
   it('never throws on odd input', () => {

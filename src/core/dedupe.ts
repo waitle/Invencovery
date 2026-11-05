@@ -216,6 +216,12 @@ function mergeGroup(members: readonly Candidate[], repoKey: string | undefined):
   if (license !== undefined) merged.license_spdx = license;
   else if (members.some((m) => m.license_spdx === null)) merged.license_spdx = null;
   else delete merged.license_spdx;
+  // Members that state a license (null = "none" or NOASSERTION) but disagree: keep every value, it is a finding.
+  const stated = members.filter((m) => m.license_spdx !== undefined);
+  // A custom license text (SEE LICENSE IN, UNLICENSED) and GitHub's "none/NOASSERTION" are the same finding.
+  const distinct = new Set(stated.map((m) => (m.license_spdx === null || /^\s*(SEE\s+LICEN[CS]E\s+IN\b|UNLICENSED\s*$)/i.test(m.license_spdx ?? '') ? 'custom-or-none' : (m.license_spdx ?? '').trim().toLowerCase())));
+  if (distinct.size > 1) merged.license_by_ref = stated.map((m) => ({ ref: m.ref, license: m.license_spdx ?? null }));
+  else delete merged.license_by_ref;
 
   // Freshest signal wins.
   let latest: string | undefined;
@@ -311,6 +317,16 @@ export function dedupe(candidates: readonly Candidate[], opts: DedupeOptions = {
     if (list) list.push(i);
     else byRepo.set(key, [i]);
   });
+  /** A member of the component of `root` is a registry package named exactly like the repository (`npm:x` for `o/x`). */
+  const namesRepository = (root: number, repoName: string): boolean => {
+    if (repoName === '') return false;
+    for (let i = 0; i < n; i++) {
+      if (find(i) !== root) continue;
+      const parsed = parseRef((candidates[i] as Candidate).ref);
+      if (parsed !== undefined && (parsed.scheme === 'npm' || parsed.scheme === 'pypi') && parsed.id.toLowerCase() === repoName) return true;
+    }
+    return false;
+  };
   for (const indices of byRepo.values()) {
     // Components of this URL group, in first-appearance order.
     const comps = new Map<number, number[]>();
@@ -342,8 +358,13 @@ export function dedupe(candidates: readonly Candidate[], opts: DedupeOptions = {
     const roots = [...comps.keys()];
     const githubRoot = roots.find((root) => compSchemes.get(root)?.has('github'));
     if (githubRoot !== undefined) {
+      // Forks are often published with the original repository URL, which makes the scheme ambiguous. The package
+      // whose name is the repository name is the original one: it still merges when it is the only such package.
+      const repoName = (repoKeys[indices[0] as number] ?? '').split('/').pop() ?? '';
+      const named = roots.filter((root) => root !== githubRoot && namesRepository(root, repoName));
       for (const root of roots) {
-        if (root !== githubRoot && !ambiguous(root)) union(githubRoot, root);
+        if (root === githubRoot) continue;
+        if (!ambiguous(root) || (named.length === 1 && named[0] === root)) union(githubRoot, root);
       }
     } else if (!roots.some(ambiguous)) {
       const [anchor, ...rest] = roots;

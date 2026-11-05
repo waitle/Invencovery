@@ -251,7 +251,11 @@ async function searchStats(
   return undefined;
 }
 
-/** `SEE LICENSE IN ...` and `UNLICENSED` carry no SPDX identifier. */
+/**
+ * `SEE LICENSE IN ...` and `UNLICENSED` carry no SPDX identifier. When nothing
+ * else is declared they are returned as they are (at most 200 characters), so
+ * the verdict is "custom license" (usually commercial), not "no license".
+ */
 function npmLicense(doc: z.infer<typeof LatestSchema>): string | null {
   const types: string[] = [];
   const add = (v: unknown) => {
@@ -261,7 +265,7 @@ function npmLicense(doc: z.infer<typeof LatestSchema>): string | null {
   else if (doc.license) add(doc.license.type);
   if (types.length === 0) for (const l of doc.licenses ?? []) add(l.type);
   const usable = [...new Set(types)].filter((t) => !/^(SEE LICENSE|UNLICENSED$)/i.test(t));
-  if (usable.length === 0) return null;
+  if (usable.length === 0) return types.length > 0 ? types[0]!.slice(0, 200) : null;
   return usable.length === 1 ? usable[0]! : usable.join(' AND ');
 }
 

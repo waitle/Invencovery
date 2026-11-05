@@ -8,6 +8,7 @@
  * Human-readable twin: skills/recyclewheel/reference/scoring.md. A unit test
  * keeps that document and the constants below in sync.
  */
+import { isCustomLicenseText } from './license.js';
 import type {
   CandidateRef,
   DecisionKind,
@@ -206,6 +207,7 @@ function scoreLicense(license: LicenseVerdict, flags: string[]): number {
   if (license.verdict === 'unknown') {
     const spdx = license.candidate_spdx;
     addUnique(flags, spdx === null || spdx.trim() === '' ? 'no_license' : 'license_unknown');
+    if (isCustomLicenseText(spdx)) addUnique(flags, 'custom_license');
   } else if (license.verdict === 'incompatible') {
     addUnique(flags, 'license_incompatible');
   }

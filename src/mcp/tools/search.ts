@@ -409,6 +409,14 @@ function formatCount(n: number | undefined): string {
 /** Description characters shown per table row (the full text, up to 200, stays in structuredContent). */
 const MAX_DESCRIPTION_CELL = 140;
 
+/** The license, or every source's license when the merged sources disagree (`Apache-2.0 (github:o/r: none)`). */
+function licenseCell(c: Candidate): string {
+  const main = c.license_spdx ?? (c.license_spdx === null ? 'none' : '-');
+  if (c.license_by_ref === undefined) return cell(main);
+  const others = c.license_by_ref.filter((x) => (x.license ?? null) !== (c.license_spdx ?? null));
+  return cell(`${main} ≠ ${others.map((x) => `${x.ref}: ${x.license ?? 'none'}`).join(', ')}`, 300);
+}
+
 /** `61/80 compatible [stale]` for a previewed candidate, `-` otherwise. */
 function previewCell(c: Candidate): string {
   const p = c.preview;
@@ -432,7 +440,7 @@ export function candidateTableLines(candidates: readonly Candidate[], maxRows = 
     const hits = c.matched_via.hits !== undefined && c.matched_via.hits > 1 ? ` [${c.matched_via.hits} hits]` : '';
     const flags = [c.archived ? 'archived' : '', c.deprecated ? 'deprecated' : ''].filter(Boolean).join(', ');
     table.push(
-      `| ${i + 1} | \`${cell(c.ref, 1100)}\`${cell(alias, 600)}${hits}${flags ? ` [${flags}]` : ''} | ${c.source} | ${formatCount(c.stars)} | ${formatCount(c.downloads_weekly)} | ${cell(c.license_spdx ?? (c.license_spdx === null ? 'none' : '-'))} | ${previewCell(c)} | ${c.last_activity?.slice(0, 10) ?? '-'} | ${cell(c.description ?? '', MAX_DESCRIPTION_CELL)} |`,
+      `| ${i + 1} | \`${cell(c.ref, 1100)}\`${cell(alias, 600)}${hits}${flags ? ` [${flags}]` : ''} | ${c.source} | ${formatCount(c.stars)} | ${formatCount(c.downloads_weekly)} | ${licenseCell(c)} | ${previewCell(c)} | ${c.last_activity?.slice(0, 10) ?? '-'} | ${cell(c.description ?? '', MAX_DESCRIPTION_CELL)} |`,
     );
   });
   const lines = wrapUntrusted(table);
@@ -471,6 +479,13 @@ function summaryText(args: {
   const b = output.budget;
   lines.push('', `Search rounds before this call: ${b.rounds_used}/${b.rounds_limit} (hard limit ${b.hard_limit}).`);
   if (b.warning) lines.push(`Budget warning: ${softLine(b.warning)}`);
+  const conflicts = output.candidates.filter((c) => c.license_by_ref !== undefined);
+  if (conflicts.length > 0) {
+    lines.push(
+      '',
+      `License differs between sources of the same project: ${conflicts.map((c) => codeSpan(c.ref)).join(', ')} (marked ≠). The repository's default branch may be under another license than the published version; pin the version whose license you checked.`,
+    );
+  }
   lines.push(
     'Next: pick up to 5 candidates (Preview = score without fit, 0-80, and the license verdict; adopt needs base plus 4 x fit of at least 70 and a compatible or conditional license), rate fit 0-5 with a reason, and call rw_evaluate. Stop searching once a candidate reaches hint "adopt".',
   );

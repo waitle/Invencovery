@@ -187,8 +187,9 @@ describe('npm enricher', () => {
   it.each([
     [{ license: { type: 'ISC', url: 'x' } }, 'ISC'],
     [{ licenses: [{ type: 'MIT' }, { type: 'Apache-2.0' }] }, 'MIT AND Apache-2.0'],
-    [{ license: 'SEE LICENSE IN LICENSE.md' }, null],
-    [{ license: 'UNLICENSED' }, null],
+    [{ license: 'SEE LICENSE IN LICENSE.md' }, 'SEE LICENSE IN LICENSE.md'],
+    [{ license: 'UNLICENSED' }, 'UNLICENSED'],
+    [{ license: 'SEE LICENSE IN LICENSE.md', licenses: [{ type: 'MIT' }] }, 'SEE LICENSE IN LICENSE.md'],
     [{}, null],
   ])('derives the license from %j', async (doc, expected) => {
     const http = new FakeHttpClient({

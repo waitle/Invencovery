@@ -314,4 +314,38 @@ describe('rw_evaluate untrusted third-party data fence', () => {
     const after = r.text.slice(r.text.indexOf(CLOSE) + CLOSE.length);
     expect(after).toContain('budget');
   });
+
+describe('rw_evaluate license_differs_from_repo', () => {
+  it('flags a package whose repository default branch declares another license, and a custom license', async () => {
+    const enrichers = [
+      fakeEnricher(['npm'], (ref) => ({
+        license_spdx: ref === 'npm:rntp' ? 'Apache-2.0' : 'SEE LICENSE IN <license.txt>',
+        license_source: 'npm',
+        repository_url: 'https://github.com/o/rntp',
+      })),
+      fakeEnricher(['github'], () => ({ license_spdx: null, license_source: 'github', missing: [] })),
+    ];
+    h = await createHarness({ enrichers });
+    await seedComponents(h);
+    const r = await h.call('rw_evaluate', {
+      component_id: 'markdown',
+      candidates: [
+        { ref: 'npm:rntp', fit: 4, fit_reason: 'audio player for live streams' },
+        { ref: 'npm:@rntp/player', fit: 5, fit_reason: 'commercial successor of the same player' },
+      ],
+    });
+    expect(r.isError, r.text).toBe(false);
+    const out = EvaluateOutputSchema.parse(r.structured);
+    const v4 = out.evaluations.find((e) => e.ref === 'npm:rntp')!;
+    expect(v4.flags).toContain('license_differs_from_repo');
+    expect(v4.license.verdict).toBe('compatible');
+    expect(out.warnings?.join(' ')).toContain('declares Apache-2.0 but its repository');
+    const v5 = out.evaluations.find((e) => e.ref === 'npm:@rntp/player')!;
+    expect(v5.flags).toEqual(expect.arrayContaining(['custom_license', 'license_unknown']));
+    expect(v5.flags).not.toContain('no_license');
+    // Custom terms on the package and "none" on GitHub are the same finding, not a disagreement.
+    expect(v5.flags).not.toContain('license_differs_from_repo');
+    expect(v5.license.notes.join(' ')).toContain('Custom license');
+  });
+});
 });

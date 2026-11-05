@@ -83,7 +83,10 @@ export async function previewCandidates(
             base_score: scored.total,
             license_verdict: license.verdict,
             license_spdx: spdx,
-            flags: scored.flags.filter((f) => !HIDDEN_FLAGS.has(f)),
+            flags: [
+              ...scored.flags.filter((f) => !HIDDEN_FLAGS.has(f)),
+              ...(candidate.license_by_ref !== undefined ? ['license_differs_by_source'] : []),
+            ],
           },
         };
       } catch {

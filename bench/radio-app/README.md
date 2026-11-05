@@ -77,3 +77,42 @@ With the rank-based fit the current build picks `npm:react-native-track-player`,
 `npm:icecast-metadata-stats` as a reference. The old build found candidates for only two components and picked
 `github:hussainislive/musically` and `npm:apollo3-cache-persist`. Agent time (WebSearch, judgment, writing) is not in
 this table; see the agent comparison above.
+
+## Re-run with real agents (2026-11-05)
+
+Same task text for every run, sent to a fresh subagent with an empty working directory and a cold cache; the
+recyclewheel runs were told not to read the README, docs or earlier reports (the skill's example keywords, which came
+from this task, were replaced first). One run per condition, so treat the numbers as anecdotal. Network in this
+sandbox: api.deps.dev and api.npmjs.org blocked by policy, the anonymous GitHub API quota of the shared IP exhausted,
+rntp.dev and radio-browser.info unreachable; registry.npmjs.org reachable. Both conditions had the same network.
+
+| Run | Subagent tokens | Tool calls | Wall | Playback choice | Found the track-player license change | Evidence ledger |
+|---|---|---|---|---|---|---|
+| A: plain agent ([report](report-plain-2026-11-05.md)) | ~118k | 43 | ~421 s | `expo-audio@58.0.11` (+ ICY patch) | yes, by hand (npm tarball, raw license.txt) | no |
+| B1: recyclewheel, before the npm fallback ([report](report-rw-2026-11-05.md)) | ~169k | 51 | ~593 s | `react-native-video@6.19.3` (+ ICY patch) | yes; the npm vs GitHub license in the search table was the signal | yes |
+| B2: recyclewheel, after the npm fallback ([report](report-rw2-2026-11-05.md)) | ~166k | 56 | ~598 s | `react-native-track-player@4.1.2` pinned (extend) | yes, by hand | yes |
+
+All license claims that decided a pick were checked independently on 2026-11-05: npm `react-native-track-player@4.1.2`
+Apache-2.0; `@rntp/player@5.13.0` `SEE LICENSE IN <license.txt>`; `main/license.txt` non-commercial with a paid
+commercial license; `v4/LICENSE` Apache-2.0; `expo-audio@58.0.11`, `expo-sqlite@58.0.15`, `radio-browser-api@6.0.3`,
+`react-native-mmkv@4.3.2`, `@music-metadata/icy@0.2.1` MIT; `icecast-metadata-js@1.2.9` LGPL-3.0-or-later.
+
+What this shows:
+
+- **Cost: recyclewheel was not cheaper.** Both recyclewheel runs used about 40% more tokens and time than the plain
+  agent. The `rw_*` calls themselves were few (11 and 12); the extra cost came from the procedure around them: more
+  cross-cutting web research (B2: 10 WebSearch and 14 WebFetch against A's 4 and 9), recording evidence, and a 37 KB
+  skill kept in context.
+- **Accuracy: no difference in this task.** All three found the license change. The picks differ between the two
+  recyclewheel runs as much as from the plain run, so run-to-run variance dominates; B2's pick (a frozen bridge
+  module) is the one the plain agent rejected with reasons.
+- **What only recyclewheel produced:** decisions with evidence ids in a ledger, a REUSE.md export, and the
+  station-directory service kept at `reference` until its terms are read. The plain agent's report was as thorough on
+  store policy and privacy.
+- **Tool defects found and fixed after these runs:** with deps.dev and api.npmjs.org blocked every npm candidate tied at
+  54/100 (fixed: registry-search fallback; same sandbox now 90 for expo-audio and react-native-video, 64 `stale` for
+  the track player); `SEE LICENSE IN` reported as "no license" (fixed: `custom_license`); the package vs repository
+  license change not reported, and forks published under the original repository URL keeping the original package from
+  merging with its repository (fixed: the first search row now reads
+  `npm:react-native-track-player (+github:doublesymmetry/react-native-track-player) | Apache-2.0 ≠ github:...: none |
+  [stale, license_differs_by_source]`). These fixes are not yet measured with a real agent.

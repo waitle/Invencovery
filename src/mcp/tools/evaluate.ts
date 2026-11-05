@@ -35,7 +35,7 @@ import { checkBudget } from '../../core/budget.js';
 import { normalizeRepoUrl } from '../../core/dedupe.js';
 import { evaluationFor, findComponent, serializeEvent } from '../../core/ledger.js';
 
-import { judge } from '../../core/license.js';
+import { isCustomLicenseText, judge } from '../../core/license.js';
 import { mlTermsIn } from '../../core/ml-terms.js';
 import { hfSpdx, judgeModelLicense, worseVerdict } from '../../core/model-license.js';
 import { saasEvidenceSource } from '../../core/saas-evidence.js';
@@ -333,6 +333,31 @@ function githubRefFromRepositoryUrl(url: string | undefined): string | undefined
 
 const REGISTRY_SCHEMES: readonly RefScheme[] = ['npm', 'pypi', 'mcp'];
 
+/** The first stated license of a chain: a non-empty string, `null` when a source answered "no license", undefined when none answered. */
+function statedLicense(results: readonly EnrichOutput[]): string | null | undefined {
+  const named = results.find((r) => typeof r.license_spdx === 'string' && r.license_spdx.trim() !== '');
+  if (named !== undefined) return named.license_spdx!.trim();
+  return results.some((r) => r.license_spdx === null && !r.missing.includes('license')) ? null : undefined;
+}
+
+/**
+ * The published package and its repository's default branch declare different
+ * licenses (react-native-track-player: npm 4.1.2 Apache-2.0, main branch a
+ * commercial license that GitHub reports as NOASSERTION). Undefined when either
+ * side is unknown or they agree.
+ */
+function licenseConflict(
+  pkg: readonly EnrichOutput[],
+  repo: readonly EnrichOutput[],
+): { package: string | null; repository: string | null } | undefined {
+  const a = statedLicense(pkg);
+  const b = statedLicense(repo);
+  if (a === undefined || b === undefined) return undefined;
+  // A custom license file on the package and "none/NOASSERTION" on GitHub describe the same thing: GitHub cannot classify custom terms.
+  const norm = (x: string | null): string => (x === null || isCustomLicenseText(x) ? 'custom-or-none' : x.toLowerCase());
+  return norm(a) === norm(b) ? undefined : { package: a, repository: b };
+}
+
 export async function enrichRef(
   enrichers: readonly Enricher[],
   ref: string,
@@ -344,7 +369,14 @@ export async function enrichRef(
   const results = await runChain(enrichers, ref, deep, errors);
   if (REGISTRY_SCHEMES.includes(scheme)) {
     const repoRef = githubRefFromRepositoryUrl(results.find((r) => r.repository_url !== undefined)?.repository_url);
-    if (repoRef !== undefined) results.push(...(await runChain(enrichers, repoRef, deep, errors)));
+    if (repoRef !== undefined) {
+      const repo = await runChain(enrichers, repoRef, deep, errors);
+      const conflict = licenseConflict(results, repo);
+      if (conflict !== undefined && results[0] !== undefined) {
+        results[0] = { ...results[0], license_conflict: conflict, flags: [...(results[0].flags ?? []), 'license_differs_from_repo'] };
+      }
+      results.push(...repo);
+    }
   }
   return results;
 }
@@ -358,6 +390,7 @@ export interface Merged {
   missing: string[];
   model_license: ModelLicenseFacts | undefined;
   flags: string[];
+  license_conflict: EnrichOutput['license_conflict'];
   /** Name, description and topics of every enricher, for the "uses ML weights" heuristic. */
   descriptor: string;
 }
@@ -404,6 +437,7 @@ export function mergeEnrichment(results: readonly EnrichOutput[]): Merged {
     missing,
     model_license: results.find((r) => r.model_license !== undefined)?.model_license,
     flags: [...new Set(results.flatMap((r) => r.flags ?? []))],
+    license_conflict: results.find((r) => r.license_conflict !== undefined)?.license_conflict,
     descriptor: results.flatMap((r) => (r.descriptor !== undefined ? [r.descriptor] : [])).join(' '),
   };
 }
@@ -714,6 +748,12 @@ async function evaluateCandidate(
     }
   }
   errors.push(...chainErrors);
+  if (merged.license_conflict !== undefined) {
+    const c = merged.license_conflict;
+    notes.push(
+      `${candidate.ref}: the published package declares ${c.package ?? 'no license'} but its repository's default branch declares ${c.repository ?? 'none or a custom license'} (license_differs_from_repo). The license may have changed between versions: pin the version whose license you checked and do not follow the default branch.`,
+    );
+  }
 
   const fit = FitValueSchema.parse(candidate.fit);
   const clientOfService = scheme !== undefined && CODE_SCHEMES.includes(scheme);

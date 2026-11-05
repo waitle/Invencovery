@@ -511,6 +511,19 @@ function leafOutcome(candidate: LeafInfo, column: MatrixColumn, project: Project
  * OR expressions take the most favorable alternative (candidate and project
  * alike), AND the least favorable. Never throws.
  */
+/**
+ * A license field that names no SPDX license but points at the package's own
+ * terms: npm `SEE LICENSE IN <file>`, `UNLICENSED` (npm: not licensed for use by
+ * others) or an SPDX `LicenseRef-`. Such packages are usually proprietary or
+ * commercial; the verdict stays `unknown`, the flag is `custom_license`.
+ */
+export function isCustomLicenseText(text: string | null | undefined): boolean {
+  return typeof text === 'string' && /^\s*(SEE\s+LICEN[CS]E\s+IN\b|UNLICENSED\s*$|LicenseRef-)/i.test(text);
+}
+
+const CUSTOM_LICENSE_NOTE =
+  'Custom license (SEE LICENSE IN / UNLICENSED / LicenseRef): usually proprietary or commercial. Read the referenced file before use.';
+
 export function judge(input: JudgeInput): LicenseVerdict {
   const distribution = input.distribution ?? 'application';
   const column = matrixColumn(distribution);
@@ -558,7 +571,9 @@ export function judge(input: JudgeInput): LicenseVerdict {
         category: 'unknown',
         verdict: 'unknown',
         obligations: [REVIEW_LICENSE_TEXT],
-        notes: [`"${candidate.text}" is not a valid SPDX expression; treated as unknown.`],
+        notes: isCustomLicenseText(candidate.text)
+          ? [CUSTOM_LICENSE_NOTE]
+          : [`"${candidate.text}" is not a valid SPDX expression; treated as unknown.`],
       };
       break;
   }
